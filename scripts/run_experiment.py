@@ -62,6 +62,21 @@ AUDIO_TYPE_COL_MAP = {
 }
  
  
+ 
+def resolve_segment_dir(args):
+    if args.segment_dir is not None:
+        return args.segment_dir
+
+    # fallback (prevents None crash)
+    return str(PROJECT_ROOT / "Data" / "data_final" / "clean_audio")
+
+
+def resolve_csv_path(args):
+    if args.csv_path is not None:
+        return args.csv_path
+
+    return str(PROJECT_ROOT / "Data" / "data_final" / "Clinical" / "clinical_all_sessions.csv")
+
 def build_config(args, audio_cols=None) -> ExperimentConfig:
     return ExperimentConfig(
         project_root       = str(PROJECT_ROOT),
@@ -348,9 +363,8 @@ def main():
     )
     parser.add_argument("--exp", default="1",
                         choices=["1","2","3","4","5","all"])
-    parser.add_argument("--csv_path",
-                        default=None,
-                        help="Path to clinical CSV (overrides default project path)")
+    parser.add_argument("--csv_path", default=None,
+                        help="Path to clinical CSV")
     parser.add_argument("--mode", default="finetune",
                         choices=["scratch", "finetune"])
     parser.add_argument("--audio_type", default="all",
