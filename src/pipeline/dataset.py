@@ -61,19 +61,24 @@ class SinusitisDataset(Dataset):
     None        → include all available audio types (mixed training)
     ['a','e']   → include only those columns (specialist training)
     """
- 
-    def __init__(self, df, segment_dir, label_fn,
-                audio_cols=None, transform=None):
+                
+    def __init__(self,
+                 df,
+                 segment_dir: str,
+                 label_fn: Callable,
+                 audio_cols: Optional[List[str]] = None,
+                 transform: Optional[Callable] = None):
 
         self.segment_dir = Path(segment_dir)
         self.transform   = transform
         self.audio_cols  = audio_cols or ALL_AUDIO_COLS
         self.samples     = []
 
-        # Scan directory ONCE and build a lookup dict
-        # key = filename stem, value = full path string
-        all_files = {f.name: str(f)
-                    for f in self.segment_dir.rglob("*.pt")}
+        # Scan directory ONCE — build {filename: full_path} lookup
+        all_files = {
+            f.name: str(f)
+            for f in self.segment_dir.rglob("*.pt")
+        }
 
         for _, row in df.iterrows():
             subject_id = str(row["ID"]).strip()
@@ -92,12 +97,6 @@ class SinusitisDataset(Dataset):
                     if fname.startswith(prefix):
                         self.samples.append((fpath, int(label), col))
 
-                for f in all_files:
-                    name = f.name
-
-                    if f"ID{subject_id}_ses{session}_{col}" in name:
-                        self.samples.append((str(f), int(label), col))
- 
         if not self.samples:
             log.warning(
                 f"SinusitisDataset: 0 segments found. "
@@ -107,7 +106,7 @@ class SinusitisDataset(Dataset):
         else:
             log.info(
                 f"  Dataset: {len(self.samples)} segments | "
-                f"{df['ID'].nunique()} patients | "
+                f"{df['ID'].nunique()} patients |"
                 f"cols: {self.audio_cols}"
             )
  
