@@ -19,6 +19,7 @@ import logging
 from glob import glob
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+from collections import defaultdict
  
 import torch
 from torch.utils.data import Dataset
@@ -77,8 +78,23 @@ class SinusitisDataset(Dataset):
         # Scan directory ONCE — build {filename: full_path} lookup
         all_files ={Path(f).name: str(f)
              for f in self.segment_dir.rglob("*.pt")}
-       
+        
+        index = defaultdict(list)
 
+        for f in self.segment_dir.rglob("*.pt"):
+            f =Path(f)
+            name = f.name  # safe: Path object
+            parts = name.split("_")
+
+            # Expect: ID{subject}_ses{session}_{col}_...
+            if len(parts) < 3:
+                continue
+
+            key = "_".join(parts[:3])  # IDxxx_sesX_col
+            index[key].append(str(f))  # store path as string
+
+        self._file_index = index
+        
         for _, row in df.iterrows():
             subject_id = str(row["ID"]).strip()
             session    = int(row["session"])
@@ -91,10 +107,11 @@ class SinusitisDataset(Dataset):
                 continue
 
             for col in self.audio_cols:
-                prefix = f"ID{subject_id}_ses{session}_{col}"
-                for fname, fpath in all_files.items():
-                    if fname.startswith(prefix):
-                        self.samples.append((fpath, int(label), col))
+                key = f"ID{subject_id}_ses{session}_{col}"
+                matches = self._file_index.get(key, [])
+
+                for fpath in matches:
+                    self.samples.append((fpath, int(label), col))
 
         if not self.samples:
             log.warning(
@@ -163,13 +180,13 @@ class PairedDataset(Dataset):
  
         # (path1, path2, label, audio_col)
         self.pairs: List[Tuple[str, str, int, str]] = []
- 
+        
         for patient_id in df["ID"].unique():
             patient_id = str(patient_id).strip()
  
             for col in self.audio_cols:
                 pre_segs = sorted([
-                    str(f) for f in Path(self.segment_dir).rglob("*.pt")
+                    f for f in Path(self.segment_dir).rglob("*.pt")
                     if f"ID{patient_id}_ses{pre_session}_{col}" in f.name
                 ])
 
@@ -179,7 +196,7 @@ class PairedDataset(Dataset):
                 # Positive pairs: pre vs post
                 for post_ses in post_sessions:
                     post_segs = sorted([
-                        str(f) for f in Path(self.segment_dir).rglob("*.pt")
+                        f for f in Path(self.segment_dir).rglob("*.pt")
                         if f"ID{patient_id}_ses{post_ses}_{col}" in f.name
                     ])
                     for i, pre_seg in enumerate(pre_segs):
