@@ -88,12 +88,13 @@ class SinusitisDataset(Dataset):
                 continue
  
             for col in self.audio_cols:
-                pattern = str(
-                    self.segment_dir /
-                    f"ID{subject_id}_ses{session}_{col}_seg*.pt"
-                )
-                for f in sorted(glob(pattern)):
-                    self.samples.append((f, int(label), col))
+                all_files = list(Path(self.segment_dir).rglob("*.pt"))
+
+                for f in all_files:
+                    name = f.name
+
+                    if f"ID{subject_id}_ses{session}_{col}" in name:
+                        self.samples.append((str(f), int(label), col))
  
         if not self.samples:
             log.warning(
@@ -167,19 +168,13 @@ class PairedDataset(Dataset):
             patient_id = str(patient_id).strip()
  
             for col in self.audio_cols:
-                pre_segs = sorted(glob(str(
-                    self.segment_dir /
-                    f"ID{patient_id}_ses{pre_session}_{col}_seg*.pt"
-                )))
+                pre_segs = sorted(all_files = list(Path(self.segment_dir).rglob("*.pt")))
                 if not pre_segs:
                     continue
  
                 # Positive pairs: pre vs post
                 for post_ses in post_sessions:
-                    post_segs = sorted(glob(str(
-                        self.segment_dir /
-                        f"ID{patient_id}_ses{post_ses}_{col}_seg*.pt"
-                    )))
+                    post_segs = sorted(all_files = list(Path(self.segment_dir).rglob("*.pt")))
                     for i, pre_seg in enumerate(pre_segs):
                         if post_segs:
                             post_seg = post_segs[i % len(post_segs)]
