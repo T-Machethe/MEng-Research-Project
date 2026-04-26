@@ -66,8 +66,7 @@ def build_config(args, audio_cols=None) -> ExperimentConfig:
     return ExperimentConfig(
         project_root       = str(PROJECT_ROOT),
         segment_dir        = args.segment_dir,
-        csv_path           = str(PROJECT_ROOT / "Data" / "data_final" /
-                                 "Clinical" / "clinical_all_sessions.csv"),
+        csv_path           = args.csv_path,
         output_dir         = args.output_dir,
         mode               = args.mode,
         pretrained         = args.pretrained,
@@ -346,6 +345,8 @@ def main():
     )
     parser.add_argument("--exp", default="1",
                         choices=["1","2","3","4","5","all"])
+    parser.add_argument("--csv_path",required=True,
+                        help="Path to clinical metadata CSV")
     parser.add_argument("--mode", default="finetune",
                         choices=["scratch", "finetune"])
     parser.add_argument("--audio_type", default="all",
