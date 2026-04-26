@@ -363,10 +363,9 @@ def main():
     )
     parser.add_argument("--exp", default="1",
                         choices=["1","2","3","4","5","all"])
-    parser.add_argument("--csv_path", default=None,
-                        help="Path to clinical CSV")
     parser.add_argument("--mode", default="finetune",
                         choices=["scratch", "finetune"])
+    parser.add_argument("--csv_path", default=None)
     parser.add_argument("--audio_type", default="all",
                         choices=list(AUDIO_TYPE_COL_MAP.keys()),
                         help="Which audio type to train on. "
@@ -389,6 +388,11 @@ def main():
             default=None,
             help="Path to clean audio segments"
         )
+    parser.add_argument(
+    "--csv_path",
+    default=None,
+    help="Path to clinical_all_sessions.csv"
+)
     parser.add_argument(
         "--output_dir",
         default=str(PROJECT_ROOT / "results"),

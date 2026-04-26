@@ -62,33 +62,35 @@ class SinusitisDataset(Dataset):
     ['a','e']   → include only those columns (specialist training)
     """
  
-    def __init__(self,
-                 df,
-                 segment_dir: str,
-                 label_fn: Callable,
-                 audio_cols: Optional[List[str]] = None,
-                 transform: Optional[Callable] = None):
- 
+    def __init__(self, df, segment_dir, label_fn,
+                audio_cols=None, transform=None):
+
         self.segment_dir = Path(segment_dir)
         self.transform   = transform
         self.audio_cols  = audio_cols or ALL_AUDIO_COLS
- 
-        # (filepath, label, audio_col)
-        self.samples: List[Tuple[str, int, str]] = []
- 
+        self.samples     = []
+
+        # Scan directory ONCE and build a lookup dict
+        # key = filename stem, value = full path string
+        all_files = {f.name: str(f)
+                    for f in self.segment_dir.rglob("*.pt")}
+
         for _, row in df.iterrows():
             subject_id = str(row["ID"]).strip()
             session    = int(row["session"])
- 
+
             try:
                 label = label_fn(row)
             except Exception:
                 continue
             if label is None:
                 continue
- 
+
             for col in self.audio_cols:
-                all_files = list(Path(self.segment_dir).rglob("*.pt"))
+                prefix = f"ID{subject_id}_ses{session}_{col}"
+                for fname, fpath in all_files.items():
+                    if fname.startswith(prefix):
+                        self.samples.append((fpath, int(label), col))
 
                 for f in all_files:
                     name = f.name
@@ -168,13 +170,20 @@ class PairedDataset(Dataset):
             patient_id = str(patient_id).strip()
  
             for col in self.audio_cols:
-                pre_segs = sorted(all_files = list(Path(self.segment_dir).rglob("*.pt")))
+                pre_segs = sorted([
+                    str(f) for f in Path(self.segment_dir).rglob("*.pt")
+                    if f"ID{patient_id}_ses{pre_session}_{col}" in f.name
+                ])
+
                 if not pre_segs:
                     continue
  
                 # Positive pairs: pre vs post
                 for post_ses in post_sessions:
-                    post_segs = sorted(all_files = list(Path(self.segment_dir).rglob("*.pt")))
+                    post_segs = sorted([
+                        str(f) for f in Path(self.segment_dir).rglob("*.pt")
+                        if f"ID{patient_id}_ses{post_ses}_{col}" in f.name
+                    ])
                     for i, pre_seg in enumerate(pre_segs):
                         if post_segs:
                             post_seg = post_segs[i % len(post_segs)]
