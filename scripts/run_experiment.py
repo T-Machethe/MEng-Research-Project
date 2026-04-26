@@ -66,7 +66,10 @@ def build_config(args, audio_cols=None) -> ExperimentConfig:
     return ExperimentConfig(
         project_root       = str(PROJECT_ROOT),
         segment_dir        = args.segment_dir,
-        csv_path           = args.csv_path,
+        csv_path = (args.csv_path
+                    if args.csv_path is not None
+                    else str(PROJECT_ROOT / "Data" / "data_final" / "Clinical" / "clinical_all_sessions.csv")
+                ),
         output_dir         = args.output_dir,
         mode               = args.mode,
         pretrained         = args.pretrained,
@@ -345,8 +348,9 @@ def main():
     )
     parser.add_argument("--exp", default="1",
                         choices=["1","2","3","4","5","all"])
-    parser.add_argument("--csv_path",required=True,
-                        help="Path to clinical metadata CSV")
+    parser.add_argument("--csv_path",
+                        default=None,
+                        help="Path to clinical CSV (overrides default project path)")
     parser.add_argument("--mode", default="finetune",
                         choices=["scratch", "finetune"])
     parser.add_argument("--audio_type", default="all",
@@ -367,10 +371,10 @@ def main():
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--warmup_steps",  type=int,   default=500)
     parser.add_argument("--seed",          type=int,   default=42)
-    parser.add_argument(
-        "--segment_dir",
-        default=str(PROJECT_ROOT / "Data" / "data_final" / "clean_audio"),
-    )
+    parser.add_argument("--segment_dir",
+            default=None,
+            help="Path to clean audio segments"
+        )
     parser.add_argument(
         "--output_dir",
         default=str(PROJECT_ROOT / "results"),
