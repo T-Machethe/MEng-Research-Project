@@ -1,36 +1,57 @@
 """
-New CLI flags:
- 
-    --audio_type  vowels|sustained|speech|tdu|all
-                  Controls which audio columns are included in training.
-                  'all' = mixed training (default).
-                  Any other value = specialist training on that type only.
- 
-    --compare_types
-                  Run the experiment once per audio type AND once mixed,
-                  then print a side-by-side comparison table.
-                  Ignores --audio_type when set.
- 
-Usage examples:
- 
-    # Mixed training (default)
-    python scripts/run_experiment.py --exp 1
- 
-    # Train only on speech
-    python scripts/run_experiment.py --exp 1 --audio_type speech
- 
-    # Run all audio types and compare
-    python scripts/run_experiment.py --exp 1 --compare_types
+scripts/run_experiment.py
+─────────────────────────────────────────────────────────────────────────────
+Single entry point for all five sinusitis wav2vec 2.0 experiments.
+
+CLI flags
+─────────
+    --exp              : 1 | 2 | 3 | 4 | 5 | all
+    --mode             : scratch | finetune  (default: finetune)
+    --audio_type       : vowels | sustained | speech | tdu | all (default: all)
+    --compare_types    : run all audio types + mixed and compare
+    --compare_modes    : run scratch + finetune and compare side by side
+    --csv_path         : path to clinical_all_sessions.csv
+    --segment_dir      : path to preprocessed .pt segment files
+    --output_dir       : where to save results and checkpoints
+    --pretrained       : HuggingFace model ID (default: facebook/wav2vec2-base-960h)
+    --freeze_layers    : int (default: 6)
+    --imbalance        : none | weights | oversample  (default: weights)
+    --batch_size       : int (default: 16)
+    --num_epochs       : int (default: 30)
+    --learning_rate    : float (default: 1e-4)
+    --warmup_steps     : int (default: 500)
+    --seed             : int (default: 42)
+
+Usage examples
+──────────────
+    # Single experiment, finetune mode
+    python scripts/run_experiment.py --exp 1 --mode finetune --num_epochs 30
+
+    # Compare scratch vs finetune
+    python scripts/run_experiment.py --exp 1 --compare_modes --num_epochs 30
+
+    # Audio type comparison
+    python scripts/run_experiment.py --exp 1 --compare_types --num_epochs 30
+
+    # All experiments
+    python scripts/run_experiment.py --exp all --compare_modes --num_epochs 30
+
+    # Colab with explicit paths
+    python scripts/run_experiment.py \
+        --exp 1 --compare_modes --num_epochs 30 \
+        --segment_dir /content/clean_audio \
+        --csv_path /content/drive/MyDrive/Data/data_final/Clinical/clinical_all_sessions.csv \
+        --output_dir /content/drive/MyDrive/MSc_Sinusitis_results
 """
- 
+
 import argparse
 import json
 import sys
 from pathlib import Path as _Path
- 
+
 PROJECT_ROOT = _Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
- 
+
 import logging
 logging.basicConfig(
     level=logging.INFO,
@@ -38,13 +59,13 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 _log = logging.getLogger(__name__)
- 
+
 from src.experiments.base import ExperimentConfig
 from src.experiments.all_experiments import (
     Exp1CRSvsControl, Exp2PreVsPost, Exp3Trajectory,
     Exp4PairedChange, Exp5Generalisation,
 )
- 
+
 EXPERIMENT_MAP = {
     "1": Exp1CRSvsControl,
     "2": Exp2PreVsPost,
@@ -52,7 +73,7 @@ EXPERIMENT_MAP = {
     "4": Exp4PairedChange,
     "5": Exp5Generalisation,
 }
- 
+
 AUDIO_TYPE_COL_MAP = {
     "vowels":    ["a", "e", "i", "o", "u"],
     "sustained": ["a1", "a2", "a3"],
@@ -60,31 +81,31 @@ AUDIO_TYPE_COL_MAP = {
     "tdu":       ["agua", "brasero", "dia", "mesa"],
     "all":       None,   # None = use all columns
 }
- 
- 
- 
-def resolve_segment_dir(args):
-    if args.segment_dir is not None:
-        return args.segment_dir
 
-    # fallback (prevents None crash)
-    return str(PROJECT_ROOT / "Data" / "data_final" / "clean_audio")
+EXP_NAME_MAP = {
+    "1": "exp1_crs_vs_control",
+    "2": "exp2_pre_vs_post",
+    "3": "exp3_trajectory",
+    "4": "exp4_paired_change",
+    "5": "exp5_generalisation",
+}
 
 
-def resolve_csv_path(args):
-    if args.csv_path is not None:
-        return args.csv_path
+# ─────────────────────────────────────────────────────────────────────────────
+# Config builder
+# ─────────────────────────────────────────────────────────────────────────────
 
-    return str(PROJECT_ROOT / "Data" / "data_final" / "Clinical" / "clinical_all_sessions.csv")
-
-def build_config(args, audio_cols=None) -> ExperimentConfig:
+def build_config(args) -> ExperimentConfig:
     return ExperimentConfig(
         project_root       = str(PROJECT_ROOT),
-        segment_dir        = args.segment_dir,
-        csv_path = (args.csv_path
-                    if args.csv_path is not None
-                    else str(PROJECT_ROOT / "Data" / "data_final" / "Clinical" / "clinical_all_sessions.csv")
-                ),
+        segment_dir        = (args.segment_dir
+                              if args.segment_dir is not None
+                              else str(PROJECT_ROOT / "Data" / "data_final" /
+                                       "clean_audio")),
+        csv_path           = (args.csv_path
+                              if args.csv_path is not None
+                              else str(PROJECT_ROOT / "Data" / "data_final" /
+                                       "Clinical" / "clinical_all_sessions.csv")),
         output_dir         = args.output_dir,
         mode               = args.mode,
         pretrained         = args.pretrained,
@@ -96,43 +117,44 @@ def build_config(args, audio_cols=None) -> ExperimentConfig:
         warmup_steps       = args.warmup_steps,
         imbalance_strategy = args.imbalance,
         seed               = args.seed,
-        num_workers        = 2, #change to 0 for test on CPU
-        # audio_cols is passed separately to the dataset, not stored in cfg
+        num_workers        = 2,   # set to 0 for CPU/Windows testing
     )
- 
- 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Single experiment run
+# ─────────────────────────────────────────────────────────────────────────────
+
 def run_single(exp_key: str, cfg: ExperimentConfig,
                audio_cols=None, run_label: str = "") -> dict:
     """
     Run one experiment with optional audio column restriction.
- 
+
     audio_cols=None  → mixed (all types)
-    audio_cols=[...] → specialist (subset of types)
+    audio_cols=[...] → specialist (subset of types only)
     """
     ExperimentClass = EXPERIMENT_MAP[exp_key]
- 
-    # Patch output_dir to include audio type label so runs don't overwrite
+
+    # Set output subdirectory for this run.
+    # cfg is a fresh object each call so mutating it here is safe.
     if run_label and run_label != "all":
         cfg.output_dir = str(_Path(cfg.output_dir) / f"exp{exp_key}_{run_label}")
     else:
         cfg.output_dir = str(_Path(cfg.output_dir) / f"exp{exp_key}_mixed")
 
     experiment = ExperimentClass(cfg)
- 
-    # Inject audio_cols into prepare() via monkey-patch of the dataset builder
-    # This avoids changing the base class interface
-    original_prepare = experiment.prepare
- 
+
+    # Inject audio_cols into prepare() without changing base class interface
     def patched_prepare():
         from src.pipeline.dataloader import build_experiment_loaders
         from src.training.imbalance import compute_class_weights
- 
+
         train_df, val_df, test_df, label_fn = experiment.prepare_data()
- 
+
         experiment.class_weights = compute_class_weights(
             train_df, label_fn, experiment.num_classes
         )
- 
+
         (experiment.train_loader,
          experiment.val_loader,
          experiment.test_loader) = build_experiment_loaders(
@@ -146,22 +168,21 @@ def run_single(exp_key: str, cfg: ExperimentConfig,
             class_weights=experiment.class_weights,
             num_workers=cfg.num_workers,
             seed=cfg.seed,
-            audio_cols=audio_cols,   # ← injected here
+            audio_cols=audio_cols,
         )
- 
+
     experiment.prepare = patched_prepare
- 
+
     _log.info(f"\n{'-'*60}")
     _log.info(f"  {experiment.name}  [{run_label or 'mixed'}]")
     _log.info(f"  Audio cols: {audio_cols or 'ALL'}")
     _log.info(f"{'-'*60}")
- 
+
     experiment.prepare()
     results = experiment.run()
     experiment.report()
-     # ── Generate plots and PDF report ─────────────────────────────────────
-    # Note: reporter is also called inside trainer.fit() for single-mode runs.
-    # This call handles the comparison case where mode="comparison".
+
+    # Generate plots and PDF report
     try:
         from src.training.reporter import ExperimentReporter
         reporter = ExperimentReporter(
@@ -174,49 +195,54 @@ def run_single(exp_key: str, cfg: ExperimentConfig,
         reporter.generate()
     except Exception as e:
         _log.warning(f"  Reporter failed (non-fatal): {e}")
-        
+
     return results
- 
- 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Audio type comparison
+# ─────────────────────────────────────────────────────────────────────────────
+
 def run_compare_types(exp_key: str, args) -> None:
     """
     Run the experiment once per audio type group + once mixed,
     then print a side-by-side comparison table.
     """
-    all_results = {}
- 
+    all_results      = {}
+    original_out_dir = args.output_dir   # save before any mutation
+
     for type_name, cols in AUDIO_TYPE_COL_MAP.items():
         _log.info(f"\n{'─'*60}")
         _log.info(f"  Running: {type_name.upper()}")
         _log.info(f"{'─'*60}")
+
+        args.output_dir = original_out_dir   # reset each iteration
         cfg = build_config(args)
+
         try:
             results = run_single(exp_key, cfg,
-                                  audio_cols=cols,
-                                  run_label=type_name)
+                                 audio_cols=cols,
+                                 run_label=type_name)
             all_results[type_name] = results
         except Exception as e:
             _log.error(f"  [{type_name}] Failed: {e}", exc_info=True)
             all_results[type_name] = {}
- 
-    # ── Save comparison table ─────────────────────────────────────────────
-    out_path = (
-        _Path(args.output_dir) /
-        f"exp{exp_key}_audio_type_comparison.json"
-    )
+
+    args.output_dir = original_out_dir   # restore after loop
+
+    # Save comparison JSON
+    out_path = (_Path(args.output_dir) /
+                f"exp{exp_key}_audio_type_comparison.json")
     with open(out_path, "w") as f:
-        json.dump(all_results, f, indent=2)
- 
-    # ── Print formatted comparison ────────────────────────────────────────
+        json.dump(all_results, f, indent=2, default=str)
+
+    # Print comparison table
     _log.info(f"\n{'═'*76}")
     _log.info(f"  AUDIO TYPE COMPARISON — Experiment {exp_key}")
     _log.info(f"{'═'*76}")
-    _log.info(
-        f"  {'AUDIO TYPE':<14} {'N segs':>8}  "
-        f"{'ACC':>7}  {'F1':>7}  {'AUC':>7}"
-    )
-    _log.info(f"  {'─'*66}")
- 
+    _log.info(f"  {'AUDIO TYPE':<14} {'ACC':>7}  {'F1':>7}  {'AUC':>7}")
+    _log.info(f"  {'─'*44}")
+
     for type_name, results in all_results.items():
         if not results:
             _log.info(f"  {type_name:<14}  FAILED")
@@ -229,25 +255,30 @@ def run_compare_types(exp_key: str, args) -> None:
             f"  {type_name.upper():<14}  "
             f"{acc:>7.4f}  {f1:>7.4f}  {auc:>7.4f}"
         )
- 
+
     _log.info(f"{'═'*76}")
-    _log.info(f"\n  Full results saved -> {out_path}")
- 
+    _log.info(f"\n  Full results saved → {out_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scratch vs finetune comparison
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _get_metric(results: dict, key: str):
     """
-    Extract a scalar metric from results dict.
-    For train metrics, gets the last epoch value from training_history.
+    Extract a scalar metric from a results dict.
+    For train/* keys, reads the last epoch from training_history.
     """
     if not results:
         return None
 
-    # Direct key lookup
+    # Direct key
     if key in results:
         val = results[key]
         if isinstance(val, (int, float)):
             return float(val)
 
-    # Training history — get last epoch value
+    # Training history — last epoch
     if key.startswith("train/") and "training_history" in results:
         history = results["training_history"]
         if history:
@@ -262,15 +293,22 @@ def run_compare_modes(exp_key: str, args) -> None:
     """
     Run the same experiment twice — scratch then finetune —
     and print a side-by-side comparison table.
+
+    args.output_dir is saved before the loop and reset after each mode
+    so the two runs save to separate subdirectories and do not
+    overwrite each other's checkpoints.
     """
-    results = {}
+    results          = {}
+    original_out_dir = args.output_dir   # save BEFORE the loop
 
     for mode in ["scratch", "finetune"]:
         _log.info(f"\n{'█'*60}")
         _log.info(f"  MODE: {mode.upper()}")
         _log.info(f"{'█'*60}")
 
-        args.mode = mode
+        args.mode       = mode
+        args.output_dir = original_out_dir   # reset EVERY iteration
+
         cfg = build_config(args)
 
         try:
@@ -282,8 +320,10 @@ def run_compare_modes(exp_key: str, args) -> None:
             _log.error(f"  [{mode}] Failed: {e}", exc_info=True)
             results[mode] = {}
 
-        # ── Side-by-side comparison table ─────────────────────────────────────
-    _log.info(f"\\n{'═'*76}")
+    args.output_dir = original_out_dir   # restore after loop
+
+    # ── Side-by-side comparison table (outside the for loop) ─────────────
+    _log.info(f"\n{'═'*76}")
     _log.info(f"  SCRATCH vs FINE-TUNE COMPARISON — Experiment {exp_key}")
     _log.info(f"{'═'*76}")
     _log.info(
@@ -311,7 +351,8 @@ def run_compare_modes(exp_key: str, args) -> None:
         s_str     = f"{scratch_val:.4f}"  if scratch_val  is not None else "   N/A"
         f_str     = f"{finetune_val:.4f}" if finetune_val is not None else "   N/A"
         delta_str = (f"{finetune_val - scratch_val:+.4f}"
-                     if scratch_val is not None and finetune_val is not None
+                     if scratch_val  is not None and
+                        finetune_val is not None
                      else "   N/A")
 
         _log.info(
@@ -320,90 +361,82 @@ def run_compare_modes(exp_key: str, args) -> None:
 
     _log.info(f"{'═'*76}")
 
-    # ── Save comparison JSON ───────────────────────────────────────────────
-    out_path = _Path(args.output_dir) / f"exp{exp_key}_scratch_vs_finetune.json"
+    # Save comparison JSON
+    out_path = (_Path(args.output_dir) /
+                f"exp{exp_key}_scratch_vs_finetune.json")
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
-    _log.info(f"\\n  JSON saved → {out_path}")
+    _log.info(f"\n  JSON saved → {out_path}")
 
-    # ── Generate comparison plot and PDF ──────────────────────────────────
+    # Generate comparison plots and PDF
     try:
         from src.training.reporter import ExperimentReporter
 
-        # Determine experiment name from map
-        exp_names = {
-            "1": "exp1_crs_vs_control",
-            "2": "exp2_pre_vs_post",
-            "3": "exp3_trajectory",
-            "4": "exp4_paired_change",
-            "5": "exp5_generalisation",
-        }
-        exp_name = exp_names.get(exp_key, f"exp{exp_key}")
-
-        comparison_dir = _Path(args.output_dir) / f"{exp_name}_comparison"
+        exp_name       = EXP_NAME_MAP.get(exp_key, f"exp{exp_key}")
+        comparison_dir = (_Path(args.output_dir) /
+                          f"{exp_name}_comparison")
         comparison_dir.mkdir(parents=True, exist_ok=True)
+
+        # num_classes: 3 for exp3 (trajectory), 2 for all others
+        num_classes = 3 if exp_key == "3" else 2
 
         reporter = ExperimentReporter(
             results         = results,
             output_dir      = str(comparison_dir),
             experiment_name = f"{exp_name} — Scratch vs Fine-tune",
             mode            = "comparison",
-            num_classes     = 2,   # update to 3 for exp3
+            num_classes     = num_classes,
         )
         reporter.generate()
 
     except Exception as e:
         _log.warning(f"  Comparison reporter failed (non-fatal): {e}")
 
- 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Run sinusitis wav2vec 2.0 experiments with "
-                    "per-audio-type support."
+        description="Run sinusitis wav2vec 2.0 experiments."
     )
     parser.add_argument("--exp", default="1",
-                        choices=["1","2","3","4","5","all"])
+                        choices=["1", "2", "3", "4", "5", "all"])
     parser.add_argument("--mode", default="finetune",
                         choices=["scratch", "finetune"])
-    parser.add_argument("--csv_path", default=None)
     parser.add_argument("--audio_type", default="all",
                         choices=list(AUDIO_TYPE_COL_MAP.keys()),
-                        help="Which audio type to train on. "
+                        help="Audio type for specialist training. "
                              "'all' = mixed (default).")
     parser.add_argument("--compare_types", action="store_true",
-                        help="Run all audio types + mixed and compare results.")
+                        help="Run all audio types and compare results.")
     parser.add_argument("--compare_modes", action="store_true",
-                    help="Run scratch + finetune and compare side by side.")
+                        help="Run scratch + finetune and compare side by side.")
     parser.add_argument("--pretrained",
                         default="facebook/wav2vec2-base-960h")
     parser.add_argument("--freeze_layers", type=int, default=6)
     parser.add_argument("--imbalance", default="weights",
                         choices=["none", "weights", "oversample"])
-    parser.add_argument("--batch_size",    type=int,   default=16) # change to 8 for test in CPU
+    parser.add_argument("--batch_size",    type=int,   default=16)
     parser.add_argument("--num_epochs",    type=int,   default=30)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--warmup_steps",  type=int,   default=500)
     parser.add_argument("--seed",          type=int,   default=42)
-    parser.add_argument("--segment_dir",
-            default=None,
-            help="Path to clean audio segments"
-        )
-    parser.add_argument(
-    "--csv_path",
-    default=None,
-    help="Path to clinical_all_sessions.csv"
-)
-    parser.add_argument(
-        "--output_dir",
-        default=str(PROJECT_ROOT / "results"),
-    )
+    parser.add_argument("--segment_dir",   default=None,
+                        help="Path to preprocessed .pt segment files.")
+    parser.add_argument("--csv_path",      default=None,
+                        help="Path to clinical_all_sessions.csv.")
+    parser.add_argument("--output_dir",
+                        default=str(PROJECT_ROOT / "results"),
+                        help="Root directory for results and checkpoints.")
     args = parser.parse_args()
- 
+
     _Path(args.output_dir).mkdir(parents=True, exist_ok=True)
- 
-    exp_keys = (["1","2","3","4","5"] if args.exp == "all"
+
+    exp_keys = (["1", "2", "3", "4", "5"] if args.exp == "all"
                 else [args.exp])
- 
+
     for exp_key in exp_keys:
         if args.compare_modes:
             run_compare_modes(exp_key, args)
@@ -413,9 +446,9 @@ def main():
             cols = AUDIO_TYPE_COL_MAP[args.audio_type]
             cfg  = build_config(args)
             run_single(exp_key, cfg,
-                    audio_cols=cols,
-                    run_label=args.audio_type)
- 
- 
+                       audio_cols=cols,
+                       run_label=args.audio_type)
+
+
 if __name__ == "__main__":
     main()
