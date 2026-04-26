@@ -75,10 +75,9 @@ class SinusitisDataset(Dataset):
         self.samples     = []
 
         # Scan directory ONCE — build {filename: full_path} lookup
-        all_files = {
-            f.name: str(f)
-            for f in self.segment_dir.rglob("*.pt")
-        }
+        all_files ={Path(f).name: str(f)
+             for f in self.segment_dir.rglob("*.pt")}
+       
 
         for _, row in df.iterrows():
             subject_id = str(row["ID"]).strip()
