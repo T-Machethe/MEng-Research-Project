@@ -8,8 +8,6 @@ from src.pipeline.dataset import SinusitisDataset, PairedDataset
 from src.training.imbalance import (
     build_weighted_sampler, log_imbalance_report
 )
-
- 
  
 def collate_standard(batch):
     """
