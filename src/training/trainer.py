@@ -90,6 +90,13 @@ class Trainer:
             if cfg.freeze_encoder:
                 backbone.feature_extractor.requires_grad_(False)
                 backbone.feature_projection.requires_grad_(False)
+                
+            else: 
+                backbone = Wav2Vec2Model.from_pretrained(
+                    cfg.pretrained,
+                    mask_time_prob=0.0,      # ← disable time masking
+                    mask_feature_prob=0.0,   # ← disable feature masking
+                )
 
             for i, layer in enumerate(backbone.encoder.layers):
                 if i < cfg.freeze_layers:
@@ -372,6 +379,7 @@ class Trainer:
 
             # Single forward call — no .wav2vec2 attribute access
             input_values = torch.nan_to_num(input_values, nan=0.0, posinf=1.0, neginf=-1.0)
+            input_values = input_values.clamp(-10.0, 10.0) 
             logits = self.model(
                 input_values=input_values,
                 attention_mask=attention_mask,
