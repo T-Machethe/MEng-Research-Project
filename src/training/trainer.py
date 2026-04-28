@@ -89,12 +89,18 @@ class Trainer:
             # mask_time_prob / mask_feature_prob MUST be 0.0 for fine-tuning:
             # masked_spec_embed is randomly initialised and produces NaN
             # outputs when masking is active, causing loss=NaN from step 0.
+            
+            log.info(f"  Loading pretrained weights: {cfg.pretrained}")
+            from transformers.utils import logging as hf_logging
+            hf_logging.set_verbosity_error()          # suppress HF progress bars
             backbone = Wav2Vec2Model.from_pretrained(
                 cfg.pretrained,
-                mask_time_prob=0.0,      # ← disable time masking (NaN fix)
-                mask_feature_prob=0.0,   # ← disable feature masking (NaN fix)
+                mask_time_prob=0.0,
+                mask_feature_prob=0.0,
             )
-
+            hf_logging.set_verbosity_warning()        # restore after load
+            log.info("  Pretrained weights loaded.")
+            
             if cfg.freeze_encoder:
                 backbone.feature_extractor.requires_grad_(False)
                 backbone.feature_projection.requires_grad_(False)
@@ -158,7 +164,7 @@ class Trainer:
                 map_location=self.device,
                 weights_only=True,
             )
-            self.model.load_state_dict(ckpt["model"])
+            self.model.load_state_dict(ckpt["model"],strict=False)
             self.optimizer.load_state_dict(ckpt["optimizer"])
             if ckpt.get("scheduler") and self.scheduler:
                 self.scheduler.load_state_dict(ckpt["scheduler"])
@@ -519,7 +525,7 @@ class Trainer:
             map_location=self.device,
             weights_only=True,
         )
-        self.model.load_state_dict(ckpt["model"])
+        self.model.load_state_dict(ckpt["model"],strict=False)
         log.info(f"  Loaded → {filename}  "
                 f"(epoch {ckpt['epoch']}, "
                 f"val_loss {ckpt['val_loss']:.4f})")
