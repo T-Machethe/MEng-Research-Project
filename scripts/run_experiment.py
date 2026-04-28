@@ -117,6 +117,8 @@ def build_config(args) -> ExperimentConfig:
         warmup_steps       = args.warmup_steps,
         imbalance_strategy = args.imbalance,
         seed               = args.seed,
+        save_every         = args.save_every,
+        keep_last_n        = args.keep_last_n,
         num_workers        = 2,   # set to 0 for CPU/Windows testing
     )
 
@@ -435,12 +437,18 @@ def main():
                         default=str(PROJECT_ROOT / "results"),
                         help="Root directory for results and checkpoints.")
     args = parser.parse_args()
- 
+
     _Path(args.output_dir).mkdir(parents=True, exist_ok=True)
- 
+
+    # Set up logging — quiet console by default, full detail in training.log
+    _setup_logging(
+        log_dir=args.output_dir,
+        verbose_console=args.verbose,
+    )
+
     exp_keys = (["1", "2", "3", "4", "5"] if args.exp == "all"
                 else [args.exp])
- 
+
     for exp_key in exp_keys:
         if args.compare_modes:
             run_compare_modes(exp_key, args)
@@ -452,7 +460,7 @@ def main():
             run_single(exp_key, cfg,
                        audio_cols=cols,
                        run_label=args.audio_type)
- 
- 
+
+
 if __name__ == "__main__":
     main()

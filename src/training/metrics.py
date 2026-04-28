@@ -75,21 +75,28 @@ def compute_metrics(all_labels: List[int],
         except Exception as e:
             log.warning(f"ROC-AUC computation failed: {e}")
  
-    # Log human-readable report
-    log.info(f"\n{'─'*50}")
-    log.info(f"  Evaluation [{split_name.upper()}]")
-    log.info(f"{'─'*50}")
-    log.info(f"  Accuracy  : {accuracy:.4f}")
-    log.info(f"  F1 (macro): {f1_macro:.4f}")
+    # ── Console: one-line summary (always visible) ────────────────────
+    auc_str = (f" | auc {metrics[f'{split_name}/roc_auc']:.4f}"
+               if f"{split_name}/roc_auc" in metrics else "")
+    log.info(
+        f"  [{split_name.upper():5s}] acc {accuracy:.4f} | "
+        f"f1 {f1_macro:.4f}{auc_str}"
+    )
+    # ── File only: full classification report + confusion matrix ───────
+    log.debug(f"\n{'─'*50}")
+    log.debug(f"  Evaluation [{split_name.upper()}]")
+    log.debug(f"{'─'*50}")
+    log.debug(f"  Accuracy  : {accuracy:.4f}")
+    log.debug(f"  F1 (macro): {f1_macro:.4f}")
     if f"{split_name}/roc_auc" in metrics:
-        log.info(f"  ROC-AUC   : {metrics[f'{split_name}/roc_auc']:.4f}")
-    log.info(f"\n  Classification Report:")
+        log.debug(f"  ROC-AUC   : {metrics[f'{split_name}/roc_auc']:.4f}")
+    log.debug(f"\n  Classification Report:")
     report = classification_report(labels, preds, zero_division=0)
     for line in report.split("\n"):
-        log.info(f"    {line}")
-    log.info(f"\n  Confusion Matrix:")
+        log.debug(f"    {line}")
+    log.debug(f"\n  Confusion Matrix:")
     for row in cm:
-        log.info(f"    {row}")
+        log.debug(f"    {row}")
  
     return metrics
 
@@ -266,4 +273,3 @@ def _print_audio_type_table(per_type_metrics: Dict, split_name: str):
         )
  
     log_metrics.info(f"{'═'*72}\n")
- 
