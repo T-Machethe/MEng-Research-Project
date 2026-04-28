@@ -475,6 +475,8 @@ def main():
                         help="Save a numbered checkpoint every N epochs (default 5).")
     parser.add_argument("--keep_last_n",  type=int,   default=2,
                         help="Keep only the N most recent epoch checkpoints on disk (default 2).")
+    parser.add_argument("--verbose",       action="store_true", default=False,
+                        help="Print full INFO logs to console (default: only epoch summaries).")
     parser.add_argument("--segment_dir",   default=None,
                         help="Path to preprocessed .pt segment files.")
     parser.add_argument("--csv_path",      default=None,
