@@ -158,13 +158,15 @@ class ExperimentReporter:
             return
 
         epochs     = [h["epoch"]          for h in history]
-        train_loss = [h.get("train/loss", np.nan) for h in history]
+        train_loss = [h.get("train/loss",     np.nan) for h in history]
         train_acc  = [h.get("train/accuracy", np.nan) for h in history]
         train_f1   = [h.get("train/f1_macro", np.nan) for h in history]
 
-        # Val metrics come from the main results dict (last val evaluation)
-        # For per-epoch val we'd need to store them in history too
-        # Here we plot what we have
+        # Val metrics are now stored per-epoch in training_history
+        val_loss   = [h.get("val/loss",       np.nan) for h in history]
+        val_acc    = [h.get("val/accuracy",   np.nan) for h in history]
+        val_f1     = [h.get("val/f1_macro",   np.nan) for h in history]
+        has_val    = any(not np.isnan(v) for v in val_loss)
 
         fig = plt.figure(figsize=(16, 10), facecolor=BG)
         fig.suptitle(
@@ -179,9 +181,13 @@ class ExperimentReporter:
         ax1 = fig.add_subplot(gs[0, 0])
         ax1.plot(epochs, train_loss, color=ACCENT, linewidth=2,
                  marker="o", markersize=4, label="Train Loss")
-        ax1.axhline(self.results.get("val/loss", np.nan),
-                    color=ORANGE, linewidth=1.5, linestyle="--",
-                    label=f"Best Val Loss: {self.results.get('val/loss', 0):.4f}")
+        if has_val:
+            ax1.plot(epochs, val_loss, color=ORANGE, linewidth=2,
+                     marker="s", markersize=4, linestyle="--", label="Val Loss")
+        else:
+            ax1.axhline(self.results.get("val/loss", np.nan),
+                        color=ORANGE, linewidth=1.5, linestyle="--",
+                        label=f"Best Val Loss: {self.results.get('val/loss', 0):.4f}")
         ax1.set_title("Loss per Epoch", pad=8)
         ax1.set_xlabel("Epoch")
         ax1.set_ylabel("Loss")
@@ -193,9 +199,13 @@ class ExperimentReporter:
         ax2 = fig.add_subplot(gs[0, 1])
         ax2.plot(epochs, train_acc, color=GREEN, linewidth=2,
                  marker="s", markersize=4, label="Train Accuracy")
-        ax2.axhline(self.results.get("val/accuracy", np.nan),
-                    color=ORANGE, linewidth=1.5, linestyle="--",
-                    label=f"Val Acc: {self.results.get('val/accuracy', 0):.4f}")
+        if has_val:
+            ax2.plot(epochs, val_acc, color=ORANGE, linewidth=2,
+                     marker="^", markersize=4, linestyle="--", label="Val Accuracy")
+        else:
+            ax2.axhline(self.results.get("val/accuracy", np.nan),
+                        color=ORANGE, linewidth=1.5, linestyle="--",
+                        label=f"Val Acc: {self.results.get('val/accuracy', 0):.4f}")
         ax2.axhline(self.results.get("test/accuracy", np.nan),
                     color=PURPLE, linewidth=1.5, linestyle=":",
                     label=f"Test Acc: {self.results.get('test/accuracy', 0):.4f}")
@@ -211,9 +221,13 @@ class ExperimentReporter:
         ax3 = fig.add_subplot(gs[1, 0])
         ax3.plot(epochs, train_f1, color=PURPLE, linewidth=2,
                  marker="^", markersize=4, label="Train F1 (macro)")
-        ax3.axhline(self.results.get("val/f1_macro", np.nan),
-                    color=ORANGE, linewidth=1.5, linestyle="--",
-                    label=f"Val F1: {self.results.get('val/f1_macro', 0):.4f}")
+        if has_val:
+            ax3.plot(epochs, val_f1, color=ORANGE, linewidth=2,
+                     marker="o", markersize=4, linestyle="--", label="Val F1 (macro)")
+        else:
+            ax3.axhline(self.results.get("val/f1_macro", np.nan),
+                        color=ORANGE, linewidth=1.5, linestyle="--",
+                        label=f"Val F1: {self.results.get('val/f1_macro', 0):.4f}")
         ax3.axhline(self.results.get("test/f1_macro", np.nan),
                     color=PURPLE, linewidth=1.5, linestyle=":",
                     label=f"Test F1: {self.results.get('test/f1_macro', 0):.4f}")
@@ -603,6 +617,30 @@ class ExperimentReporter:
         log.info(f"  {df.to_string(index=False)}")
         log.info(f"{'═'*60}\n")
 
+        # ── Per-audio-type breakdown (if present) ─────────────────────────
+        per_type = self.results.get("test/per_audio_type")
+        if per_type:
+            rows_pt = []
+            for audio_type, m in per_type.items():
+                rows_pt.append({
+                    "audio_type":  audio_type,
+                    "n_segments":  m.get("n_segments", ""),
+                    "accuracy":    m.get("accuracy"),
+                    "f1_macro":    m.get("f1_macro"),
+                    "roc_auc":     m.get("roc_auc"),
+                    "note":        m.get("note", ""),
+                })
+            df_pt = pd.DataFrame(rows_pt)
+            pt_path = self.tables_dir / "per_audio_type.csv"
+            df_pt.to_csv(pt_path, index=False, float_format="%.4f")
+            log.info(f"  Saved → {pt_path.name}")
+
+            log.info(f"\n{'═'*72}")
+            log.info(f"  PER AUDIO TYPE — {self.experiment_name}  [TEST]")
+            log.info(f"{'═'*72}")
+            log.info(f"  {df_pt.to_string(index=False)}")
+            log.info(f"{'═'*72}\n")
+
     # ─────────────────────────────────────────────────────────────────────────
     # PDF Report
     # ─────────────────────────────────────────────────────────────────────────
@@ -722,6 +760,52 @@ class ExperimentReporter:
                                         fontfamily="monospace",
                                         fontweight="bold" if row == 0
                                         else "normal")
+
+                pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+                plt.close(fig)
+
+            # ── Per-audio-type table page (if available) ─────────────────
+            pt_csv = self.tables_dir / "per_audio_type.csv"
+            if pt_csv.exists():
+                df_pt = pd.read_csv(pt_csv)
+                # Drop note column if all empty
+                if "note" in df_pt.columns and df_pt["note"].isna().all():
+                    df_pt = df_pt.drop(columns=["note"])
+
+                fig = plt.figure(figsize=(11.7, max(4, len(df_pt) * 0.45 + 1.5)),
+                                 facecolor=BG)
+                ax  = fig.add_subplot(111)
+                ax.axis("off")
+                ax.set_facecolor(BG)
+                ax.set_title("Per Audio Type Results — Test Set",
+                             fontsize=11, color=TEXT, pad=10,
+                             fontfamily="monospace")
+
+                # Format floats
+                for col in ["accuracy", "f1_macro", "roc_auc"]:
+                    if col in df_pt.columns:
+                        df_pt[col] = df_pt[col].apply(
+                            lambda x: f"{x:.4f}" if pd.notna(x) else "N/A"
+                        )
+
+                tbl = ax.table(
+                    cellText  = df_pt.values.tolist(),
+                    colLabels = list(df_pt.columns),
+                    loc       = "center",
+                    cellLoc   = "center",
+                )
+                tbl.auto_set_font_size(False)
+                tbl.set_fontsize(9)
+                tbl.scale(1.2, 1.8)
+
+                for (row, col), cell in tbl.get_celld().items():
+                    cell.set_facecolor(PANEL if row > 0 else BG)
+                    cell.set_edgecolor(BORDER)
+                    cell.set_text_props(
+                        color=TEXT if row > 0 else ACCENT,
+                        fontfamily="monospace",
+                        fontweight="bold" if row == 0 else "normal",
+                    )
 
                 pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
                 plt.close(fig)

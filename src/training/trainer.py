@@ -84,20 +84,21 @@ class Trainer:
             backbone = Wav2Vec2Model(config)
 
         else:
-            # Load backbone only — no lm_head, no vocabulary-size mismatch
-            backbone = Wav2Vec2Model.from_pretrained(cfg.pretrained)
-
+            # Load backbone only — no lm_head, no vocabulary-size mismatch.
+            # mask_time_prob / mask_feature_prob MUST be 0.0 for fine-tuning:
+            # masked_spec_embed is randomly initialised and produces NaN
+            # outputs when masking is active, causing loss=NaN from step 0.
+            
+            backbone = Wav2Vec2Model.from_pretrained(
+                cfg.pretrained,
+                mask_time_prob=0.0,      # ← disable time masking (NaN fix)
+                mask_feature_prob=0.0,   # ← disable feature masking (NaN fix)
+            )
+ 
             if cfg.freeze_encoder:
                 backbone.feature_extractor.requires_grad_(False)
                 backbone.feature_projection.requires_grad_(False)
-                
-            else: 
-                backbone = Wav2Vec2Model.from_pretrained(
-                    cfg.pretrained,
-                    mask_time_prob=0.0,      # ← disable time masking
-                    mask_feature_prob=0.0,   # ← disable feature masking
-                )
-
+ 
             for i, layer in enumerate(backbone.encoder.layers):
                 if i < cfg.freeze_layers:
                     for p in layer.parameters():
@@ -366,35 +367,55 @@ class Trainer:
 
     @torch.no_grad()
     def _evaluate(self, loader, split_name: str) -> dict:
-        from src.training.metrics import compute_metrics
-
+        from src.training.metrics import compute_metrics, evaluate_by_audio_type
+ 
         self.model.eval()
         total_loss = 0.0
-        all_labels, all_preds, all_probs = [], [], []
-
+        all_labels, all_preds, all_probs, all_audio_cols = [], [], [], []
+ 
         for batch in loader:
-            input_values   = batch["input_values"].to(self.device)
-            attention_mask = batch["attention_mask"].to(self.device)
-            labels         = batch["labels"].to(self.device)
-
-            # Single forward call — no .wav2vec2 attribute access
-            input_values = torch.nan_to_num(input_values, nan=0.0, posinf=1.0, neginf=-1.0)
-            input_values = input_values.clamp(-10.0, 10.0) 
-            logits = self.model(
-                input_values=input_values,
-                attention_mask=attention_mask,
-            )   # [B, num_classes]
-
+            labels = batch["labels"].to(self.device)
+ 
+            # ── Paired batch (Exp 4) ──────────────────────────────────────
+            if "input_values_1" in batch:
+                iv1 = torch.nan_to_num(
+                    batch["input_values_1"].to(self.device),
+                    nan=0.0, posinf=1.0, neginf=-1.0).clamp(-10.0, 10.0)
+                iv2 = torch.nan_to_num(
+                    batch["input_values_2"].to(self.device),
+                    nan=0.0, posinf=1.0, neginf=-1.0).clamp(-10.0, 10.0)
+                am1 = batch["attention_mask_1"].to(self.device)
+                am2 = batch["attention_mask_2"].to(self.device)
+                logits = (
+                    self.model(input_values=iv1, attention_mask=am1) +
+                    self.model(input_values=iv2, attention_mask=am2)
+                ) / 2.0
+            else:
+                input_values   = batch["input_values"].to(self.device)
+                attention_mask = batch["attention_mask"].to(self.device)
+                input_values = torch.nan_to_num(
+                    input_values, nan=0.0, posinf=1.0, neginf=-1.0)
+                input_values = input_values.clamp(-10.0, 10.0)
+                logits = self.model(
+                    input_values=input_values,
+                    attention_mask=attention_mask,
+                )   # [B, num_classes]
+ 
             loss        = self.loss_fn(logits, labels)
-            total_loss += loss.item()          # ← was missing before
-
+            total_loss += loss.item()
+ 
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
             preds = logits.argmax(dim=-1).cpu().tolist()
-
+ 
             all_labels.extend(labels.cpu().tolist())
             all_preds.extend(preds)
             all_probs.extend(probs)
-
+ 
+            # Collect audio_col tags stored by the collate_fn
+            batch_cols = batch.get("audio_cols", [])
+            if batch_cols:
+                all_audio_cols.extend(batch_cols)
+ 
         avg_loss = total_loss / max(len(loader), 1)
         metrics  = compute_metrics(
             all_labels,
@@ -404,6 +425,22 @@ class Trainer:
             split_name,
         )
         metrics[f"{split_name}/loss"] = avg_loss
+ 
+        # ── Per-audio-type breakdown (test split only, Option B) ───────────
+        if split_name == "test" and len(all_audio_cols) == len(all_labels):
+            try:
+                per_type = evaluate_by_audio_type(
+                    all_labels     = all_labels,
+                    all_preds      = all_preds,
+                    all_probs      = np.array(all_probs),
+                    all_audio_cols = all_audio_cols,
+                    num_classes    = self.num_classes,
+                    split_name     = split_name,
+                )
+                metrics["test/per_audio_type"] = per_type
+            except Exception as e:
+                log.warning(f"  Per-audio-type evaluation failed (non-fatal): {e}")
+ 
         return metrics
 
     # ── Internal checkpoint helpers ───────────────────────────────────────
@@ -437,6 +474,16 @@ class Trainer:
 
         log.info(f"  Checkpoint saved → {filename}")
         
+        # ── Prune old epoch checkpoints to save Drive space ───────────────
+        keep_n = getattr(self.cfg, "keep_last_n", 2)
+        epoch_ckpts = sorted(
+            self.output_dir.glob("epoch_*.pt"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        for old_ckpt in epoch_ckpts[:-keep_n]:
+            old_ckpt.unlink(missing_ok=True)
+            log.info(f"  Pruned old checkpoint → {old_ckpt.name}")
+            
         
     def _load(self, filename: str):
         path = self.output_dir / filename

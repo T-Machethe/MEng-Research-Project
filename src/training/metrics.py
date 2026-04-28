@@ -9,7 +9,8 @@ Reports:
 from __future__ import annotations
  
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Optional
+from src.pipeline.dataset import AUDIO_TYPE_GROUPS, COL_TO_GROUP
 import logging
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score, confusion_matrix
