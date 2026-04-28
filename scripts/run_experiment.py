@@ -53,11 +53,57 @@ PROJECT_ROOT = _Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+
+def _setup_logging(log_dir: str = None, verbose_console: bool = False):
+    """
+    Two-handler logging:
+      Console  — WARNING by default; only errors + one epoch summary line
+                 per epoch (via the dedicated "epoch_summary" logger).
+                 Pass verbose_console=True (--verbose flag) to restore
+                 full INFO output to the cell.
+      File     — DEBUG always; full step-level detail written to
+                 OUTPUT_DIR/training.log on Drive.
+    """
+    fmt_console = logging.Formatter(
+        "%(asctime)s  %(message)s", datefmt="%H:%M:%S"
+    )
+    fmt_file = logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%H:%M:%S",
+    )
+ 
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)       # capture everything at root level
+    root.handlers.clear()
+ 
+    # ── Console handler ───────────────────────────────────────────────────
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO if verbose_console else logging.WARNING)
+    ch.setFormatter(fmt_console)
+    root.addHandler(ch)
+ 
+    # ── epoch_summary logger — always prints one line per epoch ──────────
+    # trainer.py logs the compact epoch line through this logger so it
+    # always appears on the console regardless of the WARNING threshold.
+    es = logging.getLogger("epoch_summary")
+    es.setLevel(logging.DEBUG)
+    es.propagate = False               # don't double-print via root
+    es_ch = logging.StreamHandler()
+    es_ch.setLevel(logging.INFO)
+    es_ch.setFormatter(fmt_console)
+    es.addHandler(es_ch)
+ 
+    # ── File handler — full DEBUG detail on Drive ─────────────────────────
+    if log_dir:
+        _LogPath(log_dir).mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(
+            _LogPath(log_dir) / "training.log", mode="a", encoding="utf-8"
+        )
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(fmt_file)
+        root.addHandler(fh)
+        es.addHandler(fh)              # epoch summaries also go to file
+ 
 _log = logging.getLogger(__name__)
 
 from src.experiments.base import ExperimentConfig
