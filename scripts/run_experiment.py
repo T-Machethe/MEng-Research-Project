@@ -423,6 +423,10 @@ def main():
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--warmup_steps",  type=int,   default=500)
     parser.add_argument("--seed",          type=int,   default=42)
+    parser.add_argument("--save_every",   type=int,   default=5,
+                        help="Save a numbered checkpoint every N epochs (default 5).")
+    parser.add_argument("--keep_last_n",  type=int,   default=2,
+                        help="Keep only the N most recent epoch checkpoints on disk (default 2).")
     parser.add_argument("--segment_dir",   default=None,
                         help="Path to preprocessed .pt segment files.")
     parser.add_argument("--csv_path",      default=None,
@@ -431,12 +435,12 @@ def main():
                         default=str(PROJECT_ROOT / "results"),
                         help="Root directory for results and checkpoints.")
     args = parser.parse_args()
-
+ 
     _Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-
+ 
     exp_keys = (["1", "2", "3", "4", "5"] if args.exp == "all"
                 else [args.exp])
-
+ 
     for exp_key in exp_keys:
         if args.compare_modes:
             run_compare_modes(exp_key, args)
@@ -448,7 +452,7 @@ def main():
             run_single(exp_key, cfg,
                        audio_cols=cols,
                        run_label=args.audio_type)
-
-
+ 
+ 
 if __name__ == "__main__":
     main()

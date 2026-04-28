@@ -142,7 +142,7 @@ class Trainer:
             num_warmup_steps=cfg.warmup_steps,
             num_training_steps=total_steps,
         )
-
+ 
         best_val_loss    = float("inf")
         patience_counter = 0
         global_step      = 0
@@ -162,13 +162,13 @@ class Trainer:
             self.optimizer.load_state_dict(ckpt["optimizer"])
             if ckpt.get("scheduler") and self.scheduler:
                 self.scheduler.load_state_dict(ckpt["scheduler"])
-
+ 
             start_epoch      = ckpt["epoch"] + 1
             best_val_loss    = ckpt.get("best_val_loss", float("inf"))
             patience_counter = ckpt.get("patience_counter", 0)
             global_step      = ckpt.get("global_step", 0)
             all_train_metrics = ckpt.get("train_history", [])
-
+ 
             log.info(
                 f"  Resumed at epoch {start_epoch} | "
                 f"best_val_loss so far: {best_val_loss:.4f} | "
@@ -179,36 +179,51 @@ class Trainer:
             
             
         for epoch in range(1, cfg.num_epochs + 1):
-
+ 
             # ── Train ─────────────────────────────────────────────────────────
             self.model.train()
             epoch_loss  = 0.0
             t0          = time.time()
-
+ 
             # Collect predictions during training for metric computation
             train_labels, train_preds, train_probs = [], [], []
-
+ 
             for batch in train_loader:
-                input_values   = batch["input_values"].to(self.device)
-                attention_mask = batch["attention_mask"].to(self.device)
-                labels         = batch["labels"].to(self.device)
-
-                input_values = torch.nan_to_num(
-                    input_values, nan=0.0, posinf=1.0, neginf=-1.0
-                )
-
-                logits = self.model(
-                    input_values=input_values,
-                    attention_mask=attention_mask,
-                )
-
+                labels = batch["labels"].to(self.device)
+ 
+                # ── Paired batch (Exp 4): concatenate pre/post along batch dim
+                if "input_values_1" in batch:
+                    iv1 = torch.nan_to_num(
+                        batch["input_values_1"].to(self.device),
+                        nan=0.0, posinf=1.0, neginf=-1.0)
+                    iv2 = torch.nan_to_num(
+                        batch["input_values_2"].to(self.device),
+                        nan=0.0, posinf=1.0, neginf=-1.0)
+                    am1 = batch["attention_mask_1"].to(self.device)
+                    am2 = batch["attention_mask_2"].to(self.device)
+                    # Mean of both embeddings → single logit vector
+                    logits = (
+                        self.model(input_values=iv1, attention_mask=am1) +
+                        self.model(input_values=iv2, attention_mask=am2)
+                    ) / 2.0
+                else:
+                    input_values   = batch["input_values"].to(self.device)
+                    attention_mask = batch["attention_mask"].to(self.device)
+                    input_values = torch.nan_to_num(
+                        input_values, nan=0.0, posinf=1.0, neginf=-1.0
+                    )
+                    logits = self.model(
+                        input_values=input_values,
+                        attention_mask=attention_mask,
+                    )
+ 
                 loss = self.loss_fn(logits, labels)
-
+ 
                 if not torch.isfinite(loss):
                     log.warning(f"  NaN/Inf loss at step {global_step} — skipping.")
                     self.optimizer.zero_grad()
                     continue
-
+ 
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(
@@ -216,10 +231,10 @@ class Trainer:
                 )
                 self.optimizer.step()
                 self.scheduler.step()
-
+ 
                 epoch_loss  += loss.item()
                 global_step += 1
-
+ 
                 # Collect training predictions for epoch-level metrics
                 with torch.no_grad():
                     probs = torch.softmax(logits, dim=-1).cpu().numpy()
@@ -227,7 +242,7 @@ class Trainer:
                 train_labels.extend(labels.cpu().tolist())
                 train_preds.extend(preds)
                 train_probs.extend(probs)
-
+ 
                 if global_step % cfg.log_every == 0:
                     lr = self.scheduler.get_last_lr()[0]
                     self.writer.add_scalar("train/loss", loss.item(), global_step)
@@ -235,9 +250,9 @@ class Trainer:
                         f"  Ep {epoch:03d}  step {global_step:05d}  "
                         f"loss {loss.item():.4f}  lr {lr:.2e}"
                     )
-
+ 
             avg_train_loss = epoch_loss / max(len(train_loader), 1)
-
+ 
             # ── Compute training metrics for this epoch ────────────────────────
             train_metrics = compute_metrics(
                 train_labels, train_preds,
@@ -246,34 +261,37 @@ class Trainer:
                 split_name="train",
             )
             train_metrics["train/loss"] = avg_train_loss
-
+ 
             # Log training metrics to TensorBoard
             self.writer.add_scalar("train/accuracy",
                                 train_metrics["train/accuracy"], global_step)
             self.writer.add_scalar("train/f1_macro",
                                 train_metrics["train/f1_macro"], global_step)
-
+ 
             log.info(
                 f"  Epoch {epoch:03d} TRAIN | "
                 f"loss {avg_train_loss:.4f} | "
                 f"acc {train_metrics['train/accuracy']:.4f} | "
                 f"f1 {train_metrics['train/f1_macro']:.4f}"
             )
-
-            all_train_metrics.append({
-                "epoch": epoch,
-                **train_metrics,
-            })
-
+ 
             # ── Validate ──────────────────────────────────────────────────────
             val_metrics = self._evaluate(val_loader, "val")
             val_loss    = val_metrics.get("val/loss", float("inf"))
+ 
+            # Store both train AND val metrics per epoch so the reporter
+            # can plot val curves (not just a flat line from the last epoch)
+            all_train_metrics.append({
+                "epoch": epoch,
+                **train_metrics,
+                **val_metrics,   # ← adds val/loss, val/accuracy, val/f1_macro
+            })
             elapsed     = time.time() - t0
-
+ 
             self.writer.add_scalar("val/loss",     val_loss,   global_step)
             self.writer.add_scalar("val/accuracy",
                                 val_metrics.get("val/accuracy", 0), global_step)
-
+ 
             log.info(
                 f"  Epoch {epoch:03d}  VAL  | "
                 f"loss {val_loss:.4f} | "
@@ -282,7 +300,7 @@ class Trainer:
                 f"auc {val_metrics.get('val/roc_auc', float('nan')):.4f} | "
                 f"{elapsed:.1f}s"
             )
-
+ 
             # ── Checkpoint ────────────────────────────────────────────────────
             # Every-epoch checkpoint
             if epoch % cfg.save_every == 0:
@@ -292,7 +310,7 @@ class Trainer:
                         patience_counter=patience_counter,
                         global_step=global_step,
                         train_history=all_train_metrics)
-
+ 
             # Best model checkpoint
             if val_loss < best_val_loss:
                 best_val_loss    = val_loss
@@ -316,12 +334,12 @@ class Trainer:
                 if patience_counter >= cfg.early_stop_patience:
                     log.info(f"  Early stopping at epoch {epoch}.")
                     break
-
+ 
         # ── Final test evaluation ─────────────────────────────────────────
         log.info("\\n  Loading best model for test evaluation...")
         self._load("best_model.pt")
         test_metrics = self._evaluate(test_loader, "test")
-
+ 
         # ── Print epoch-by-epoch training summary ─────────────────────────
         log.info(f"\\n{'═'*72}")
         log.info("  TRAINING HISTORY (per epoch)")
@@ -339,16 +357,16 @@ class Trainer:
                 f"{em.get('train/f1_macro', 0):>8.4f}"
             )
         log.info(f"{'═'*72}\\n")
-
+ 
         self.writer.close()
-
+ 
         all_results = {
             "best_val_loss":    best_val_loss,
             "training_history": all_train_metrics,
             **val_metrics,
             **test_metrics,
         }
-
+ 
         # ── Generate plots and PDF report ─────────────────────────────────
         try:
             from src.training.reporter import ExperimentReporter
@@ -362,7 +380,7 @@ class Trainer:
             reporter.generate()
         except Exception as e:
             log.warning(f"  Reporter failed (non-fatal): {e}")
-
+ 
         return all_results
 
     @torch.no_grad()

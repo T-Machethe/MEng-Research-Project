@@ -44,10 +44,10 @@ class ExperimentConfig:
     freeze_encoder: bool = True
 
     # ── Training ───────────────────────────────────────────────────────────
-    batch_size:    int   = 8
+    batch_size:    int   = 16
     num_epochs:    int   = 30
     learning_rate: float = 1e-4
-    warmup_steps:  int   = 500
+    warmup_steps:  int   = 200
     weight_decay:  float = 1e-2
     max_grad_norm: float = 1.0
     early_stop_patience: int = 5
@@ -65,7 +65,8 @@ class ExperimentConfig:
 
     # ── Logging ────────────────────────────────────────────────────────────
     log_every:   int = 20
-    save_every:  int = 1
+    save_every:  int = 5
+    keep_last_n: int = 2
     num_workers: int = 2
 
     # ── Device (auto-detected if left as "auto") ───────────────────────────

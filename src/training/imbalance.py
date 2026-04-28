@@ -72,7 +72,7 @@ def build_weighted_sampler(dataset,
     if hasattr(dataset, "samples"):
         labels = [label for _, label, *_ in dataset.samples]
     elif hasattr(dataset, "pairs"):
-        labels = [label for _, _, label in dataset.pairs]
+        labels = [label for _, _, label, *_ in dataset.pairs]
     else:
         raise ValueError("Dataset must have .samples or .pairs attribute.")
 
