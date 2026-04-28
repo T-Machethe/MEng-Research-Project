@@ -95,9 +95,9 @@ def _setup_logging(log_dir: str = None, verbose_console: bool = False):
  
     # ── File handler — full DEBUG detail on Drive ─────────────────────────
     if log_dir:
-        _LogPath(log_dir).mkdir(parents=True, exist_ok=True)
+        _Path(log_dir).mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(
-            _LogPath(log_dir) / "training.log", mode="a", encoding="utf-8"
+            _Path(log_dir) / "training.log", mode="a", encoding="utf-8"
         )
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(fmt_file)
