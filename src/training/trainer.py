@@ -92,13 +92,12 @@ class Trainer:
             
             log.info(f"  Loading pretrained weights: {cfg.pretrained}")
             from transformers.utils import logging as hf_logging
-            hf_logging.set_verbosity_error()          # suppress HF progress bars
+            hf_logging.set_verbosity_warning()        # keep progress bar, suppress debug noise
             backbone = Wav2Vec2Model.from_pretrained(
                 cfg.pretrained,
                 mask_time_prob=0.0,
                 mask_feature_prob=0.0,
             )
-            hf_logging.set_verbosity_warning()        # restore after load
             log.info("  Pretrained weights loaded.")
             
             if cfg.freeze_encoder:
