@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Notebooks
+.ipynb_checkpoints/
+Delete_unneccessary_data.py
+folder_structure.py
+test_single_file.py
+
+# Environments
+.env
+venv/
+.venv/
+
+# Data (we will refine this later)
+Data/
+data final/
+*.csv
+*.xlsx
+*.parquet
+*.wav
+
+# Models / binaries
+*.pkl
+*.joblib
+*.h5
+*.pt
+
+# Outputs
+outputs/
+logs/
+results/
+Plots and visuals/
+
+# OS
+.DS_Store
+Thumbs.db

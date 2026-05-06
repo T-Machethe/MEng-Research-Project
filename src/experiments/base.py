@@ -51,6 +51,9 @@ class ExperimentConfig:
     weight_decay:        float = 1e-2
     label_smoothing:     float = 0.1    # prevents class collapse in finetune
     layerwise_lr_decay:  float = 0.8    # lower transformer layers get smaller LR
+    use_svm:             bool  = False  # run SVM on finetune embeddings
+    svm_C:               float = 1.0    # SVM regularisation
+    svm_kernel:          str   = "rbf"  # 'rbf' or 'linear'
     max_grad_norm:       float = 1.0
     early_stop_patience: int = 5
 

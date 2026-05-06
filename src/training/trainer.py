@@ -452,6 +452,26 @@ class Trainer:
             reporter.generate()
         except Exception as e:
             log.warning(f"  Reporter failed (non-fatal): {e}")
+        
+        # ── SVM on frozen finetune embeddings (finetune mode only) ────────
+        if cfg.mode == "finetune" and getattr(cfg, "use_svm", False):
+            try:
+                from src.training.svm_classifier import train_svm
+                log.info("\n  Running SVM classifier on backbone embeddings...")
+                svm_results = train_svm(
+                    model       = self.model,
+                    train_loader= train_loader,
+                    val_loader  = val_loader,
+                    test_loader = test_loader,
+                    num_classes = self.num_classes,
+                    output_dir  = str(self.output_dir),
+                    device      = self.device,
+                    C           = getattr(cfg, "svm_C", 1.0),
+                    kernel      = getattr(cfg, "svm_kernel", "rbf"),
+                )
+                all_results["svm"] = svm_results
+            except Exception as e:
+                log.warning(f"  SVM failed (non-fatal): {e}")
 
         return all_results
 

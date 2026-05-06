@@ -166,8 +166,11 @@ def build_config(args) -> ExperimentConfig:
         save_every         = args.save_every,
         keep_last_n        = args.keep_last_n,
         num_workers        = 2,   # set to 0 for CPU/Windows testing
-        label_smoothing     = args.label_smoothing,
-        layerwise_lr_decay  = args.layerwise_lr_decay,
+        label_smoothing    = args.label_smoothing,
+        layerwise_lr_decay = args.layerwise_lr_decay,
+        use_svm            = args.use_svm,
+        svm_C              = args.svm_C,
+        svm_kernel         = args.svm_kernel,
     )
 
 
@@ -483,6 +486,13 @@ def main():
                         help="Layer-wise LR decay for finetune (default 0.8).")
     parser.add_argument("--verbose",       action="store_true", default=False,
                         help="Print full INFO logs to console (default: only epoch summaries).")
+    parser.add_argument("--use_svm",    action="store_true", default=False,
+                        help="Run SVM on frozen finetune backbone embeddings.")
+    parser.add_argument("--svm_C",      type=float, default=1.0,
+                        help="SVM regularisation C (default 1.0).")
+    parser.add_argument("--svm_kernel", type=str,   default="rbf",
+                        choices=["rbf", "linear"],
+                        help="SVM kernel (default rbf).")
     parser.add_argument("--segment_dir",   default=None,
                         help="Path to preprocessed .pt segment files.")
     parser.add_argument("--csv_path",      default=None,
