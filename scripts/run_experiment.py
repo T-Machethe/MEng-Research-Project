@@ -166,6 +166,8 @@ def build_config(args) -> ExperimentConfig:
         save_every         = args.save_every,
         keep_last_n        = args.keep_last_n,
         num_workers        = 2,   # set to 0 for CPU/Windows testing
+        label_smoothing     = args.label_smoothing,
+        layerwise_lr_decay  = args.layerwise_lr_decay,
     )
 
 
@@ -475,6 +477,10 @@ def main():
                         help="Save a numbered checkpoint every N epochs (default 5).")
     parser.add_argument("--keep_last_n",  type=int,   default=2,
                         help="Keep only the N most recent epoch checkpoints on disk (default 2).")
+    parser.add_argument("--label_smoothing",    type=float, default=0.1,
+                        help="Label smoothing for CrossEntropyLoss (default 0.1).")
+    parser.add_argument("--layerwise_lr_decay", type=float, default=0.8,
+                        help="Layer-wise LR decay for finetune (default 0.8).")
     parser.add_argument("--verbose",       action="store_true", default=False,
                         help="Print full INFO logs to console (default: only epoch summaries).")
     parser.add_argument("--segment_dir",   default=None,
