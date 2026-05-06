@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+*.history
 
 # Notebooks
 .ipynb_checkpoints/
@@ -16,6 +17,7 @@ venv/
 
 # Data (we will refine this later)
 Data/
+Data.zip
 data final/
 *.csv
 *.xlsx
