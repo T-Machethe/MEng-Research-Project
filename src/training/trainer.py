@@ -434,6 +434,7 @@ class Trainer:
         all_results = {
             "best_val_loss":    best_val_loss,
             "training_history": all_train_metrics,
+            "mode":             cfg.mode,
             **val_metrics,
             **test_metrics,
         }

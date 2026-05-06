@@ -44,20 +44,20 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 log = logging.getLogger(__name__)
 
-# ── Design tokens ─────────────────────────────────────────────────────────────
-BG       = "#0D1117"
-PANEL    = "#161B22"
-BORDER   = "#30363D"
-TEXT     = "#E6EDF3"
-MUTED    = "#8B949E"
-ACCENT   = "#58A6FF"
-GREEN    = "#3FB950"
-RED      = "#F85149"
-ORANGE   = "#D29922"
-PURPLE   = "#BC8CFF"
+# ── Academic design tokens ─────────────────────────────────────────────────────
+BG       = "#FFFFFF"      # white page
+PANEL    = "#F4F6F9"      # subtle panel fill
+BORDER   = "#CED4DA"      # axis rules
+TEXT     = "#212529"      # near-black body
+MUTED    = "#6C757D"      # captions / secondary
+ACCENT   = "#1A5276"      # deep navy — primary
+GREEN    = "#1E8449"      # positive / train
+RED      = "#C0392B"      # negative / error
+ORANGE   = "#D35400"      # warning / val
+PURPLE   = "#6C3483"      # tertiary
 
-SCRATCH_COLOR  = "#F85149"
-FINETUNE_COLOR = "#3FB950"
+SCRATCH_COLOR  = "#1A5276"   # navy
+FINETUNE_COLOR = "#C0392B"   # dark red
 
 plt.rcParams.update({
     "figure.facecolor":  BG,
@@ -73,15 +73,17 @@ plt.rcParams.update({
     "ytick.labelsize":   8,
     "grid.color":        BORDER,
     "grid.linewidth":    0.5,
-    "grid.alpha":        0.6,
+    "grid.alpha":        0.5,
     "text.color":        TEXT,
-    "font.family":       "monospace",
-    "legend.facecolor":  PANEL,
+    "font.family":       "DejaVu Sans",
+    "legend.facecolor":  BG,
     "legend.edgecolor":  BORDER,
     "legend.fontsize":   8,
-    "figure.dpi":        120,
+    "figure.dpi":        150,
+    "savefig.dpi":       200,
+    "axes.spines.top":   False,
+    "axes.spines.right": False,
 })
-
 
 class ExperimentReporter:
     """
@@ -368,7 +370,11 @@ class ExperimentReporter:
             (val_probs,  val_labels,  ORANGE, "Val",  val_auc),
             (test_probs, test_labels, ACCENT, "Test", test_auc),
         ]:
-            if probs and labels and self.num_classes == 2:
+            has_data = (probs is not None
+                        and hasattr(probs, "__len__")
+                        and len(probs) > 0)
+            if has_data and self.num_classes == 2:
+                
                 try:
                     from sklearn.metrics import roc_curve
                     fpr, tpr, _ = roc_curve(labels,
@@ -660,45 +666,77 @@ class ExperimentReporter:
             ax.axis("off")
             ax.set_facecolor(BG)
 
-            # Title block
-            ax.text(0.5, 0.82,
-                    "SINUSITIS VOICE ANALYSIS",
-                    transform=ax.transAxes,
-                    fontsize=22, color=ACCENT,
-                    ha="center", fontweight="bold",
-                    fontfamily="monospace")
+            # Top rule
+            ax.axhline(0.93, color=ACCENT, linewidth=3,
+                       xmin=0.08, xmax=0.92)
 
-            ax.text(0.5, 0.72,
-                    self.experiment_name.replace("_", " ").upper(),
-                    transform=ax.transAxes,
-                    fontsize=14, color=TEXT,
-                    ha="center", fontfamily="monospace")
+            # Institution / project header
+            ax.text(0.5, 0.89,
+                    "MEng Research Project  ·  Sinusitis Voice Analysis",
+                    transform=ax.transAxes, fontsize=9,
+                    color=MUTED, ha="center")
 
-            ax.text(0.5, 0.62,
-                    "wav2vec 2.0 Clinical Audio Classification",
-                    transform=ax.transAxes,
-                    fontsize=11, color=MUTED,
-                    ha="center", fontfamily="monospace")
+            # Main title
+            ax.text(0.5, 0.78,
+                    "Clinical Voice Classification\nUsing wav2vec 2.0",
+                    transform=ax.transAxes, fontsize=22,
+                    color=ACCENT, ha="center", fontweight="bold",
+                    linespacing=1.4)
 
-            # Divider
-            ax.axhline(0.56, color=BORDER, linewidth=1,
-                       xmin=0.1, xmax=0.9)
+            # Experiment subtitle
+            exp_label  = self.experiment_name.replace("_", " ").title()
+            mode_label = self.results.get("mode", "").upper()
+            subtitle   = (exp_label + f"  —  {mode_label}"
+                          if mode_label else exp_label)
+            ax.text(0.5, 0.63, subtitle,
+                    transform=ax.transAxes, fontsize=13,
+                    color=TEXT, ha="center", fontstyle="italic")
 
-            # Key metrics block
-            metrics_text = [
-                f"Test Accuracy : {self.results.get('test/accuracy', 0):.4f}",
-                f"Test F1 Macro : {self.results.get('test/f1_macro',  0):.4f}",
-                f"Test ROC-AUC  : {self.results.get('test/roc_auc',   0):.4f}",
-                f"Val  Accuracy : {self.results.get('val/accuracy',   0):.4f}",
-                f"Val  F1 Macro : {self.results.get('val/f1_macro',   0):.4f}",
-                f"Val  ROC-AUC  : {self.results.get('val/roc_auc',    0):.4f}",
+            # Mid rule
+            ax.axhline(0.57, color=BORDER, linewidth=0.8,
+                       xmin=0.08, xmax=0.92)
+
+            # Metrics — left (Val) / right (Test)
+            val_lines = [
+                ("Val  Accuracy", f"{self.results.get('val/accuracy',  0):.4f}"),
+                ("Val  F1 Macro", f"{self.results.get('val/f1_macro',  0):.4f}"),
+                ("Val  ROC-AUC",
+                 f"{self.results.get('val/roc_auc', self.results.get('val/roc_auc_macro', float('nan'))):.4f}"),
             ]
-            ax.text(0.5, 0.48,
-                    "\n".join(metrics_text),
-                    transform=ax.transAxes,
-                    fontsize=11, color=GREEN,
-                    ha="center", fontfamily="monospace",
-                    linespacing=1.8)
+            test_lines = [
+                ("Test Accuracy", f"{self.results.get('test/accuracy', 0):.4f}"),
+                ("Test F1 Macro", f"{self.results.get('test/f1_macro', 0):.4f}"),
+                ("Test ROC-AUC",
+                 f"{self.results.get('test/roc_auc', self.results.get('test/roc_auc_macro', float('nan'))):.4f}"),
+            ]
+            for idx, (label, value) in enumerate(val_lines):
+                y = 0.50 - idx * 0.07
+                ax.text(0.27, y, label + " :",
+                        transform=ax.transAxes, fontsize=11,
+                        color=MUTED, ha="right")
+                ax.text(0.29, y, value,
+                        transform=ax.transAxes, fontsize=11,
+                        color=ORANGE, ha="left", fontweight="bold")
+            for idx, (label, value) in enumerate(test_lines):
+                y = 0.50 - idx * 0.07
+                ax.text(0.67, y, label + " :",
+                        transform=ax.transAxes, fontsize=11,
+                        color=MUTED, ha="right")
+                ax.text(0.69, y, value,
+                        transform=ax.transAxes, fontsize=11,
+                        color=ACCENT, ha="left", fontweight="bold")
+
+            ax.axvline(0.50, color=BORDER, linewidth=0.6,
+                       ymin=0.28, ymax=0.58)
+
+            # Bottom rule + footer
+            ax.axhline(0.10, color=ACCENT, linewidth=1.5,
+                       xmin=0.08, xmax=0.92)
+            ax.text(0.5, 0.06,
+                    "Automated Classification Report  ·  "
+                    "wav2vec 2.0  ·  Deep Learning Pipeline",
+                    transform=ax.transAxes, fontsize=8,
+                    color=MUTED, ha="center")
 
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
