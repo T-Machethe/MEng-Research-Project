@@ -122,14 +122,72 @@ class Trainer:
         return model.to(self.device)
 
     def _build_optimizer(self) -> AdamW:
-        trainable = [p for p in self.model.parameters()
-                     if p.requires_grad]
+        cfg   = self.cfg
+        lr    = cfg.learning_rate
+        decay = getattr(cfg, "layerwise_lr_decay", 1.0)
+        wd    = cfg.weight_decay
+
+        if cfg.mode == "finetune" and decay < 1.0:
+            
+            # Layer-wise LR decay: classifier head gets full lr,
+            # each lower transformer layer gets lr * decay^n.
+            # This prevents destroying pretrained representations
+            # in lower layers while allowing the head to adapt freely.
+            
+            param_groups = []
+
+            # Classifier head — full lr
+            param_groups.append({
+                "params": list(self.model.classifier.parameters()),
+                "lr": lr,
+            })
+
+            # Transformer encoder layers — top to bottom
+            enc_layers = self.model.backbone.encoder.layers
+            n = len(enc_layers)
+            for i, layer in enumerate(reversed(enc_layers)):
+                param_groups.append({
+                    "params": list(layer.parameters()),
+                    "lr": lr * (decay ** (i + 1)),
+                })
+
+            # Feature projection
+            param_groups.append({
+                "params": list(
+                    self.model.backbone.feature_projection.parameters()
+                ),
+                "lr": lr * (decay ** (n + 1)),
+            })
+
+            # Feature extractor — only if not frozen
+            
+            fe_params = [
+                p for p in
+                self.model.backbone.feature_extractor.parameters()
+                if p.requires_grad
+            ]
+            if fe_params:
+                param_groups.append({
+                    "params": fe_params,
+                    "lr": lr * (decay ** (n + 2)),
+                })
+
+            log.info(
+                f"  Layer-wise LR decay={decay}: "
+                f"head={lr:.2e}, "
+                f"top-layer={lr*decay:.2e}, "
+                f"bottom-layer={lr*(decay**n):.2e}"
+            )
+            return AdamW(
+                param_groups, weight_decay=wd,
+                betas=(0.9, 0.98), eps=1e-8
+            )
+
+        # Scratch or no decay — uniform lr
+        trainable = [p for p in self.model.parameters() if p.requires_grad]
         return AdamW(
-            trainable,
-            lr=self.cfg.learning_rate,
-            weight_decay=self.cfg.weight_decay,
-            betas=(0.9, 0.98),
-            eps=1e-8,
+            trainable, lr=lr, weight_decay=wd,
+            betas=(0.9, 0.98), eps=1e-8
         )
 
     def _build_loss(self, class_weights) -> nn.CrossEntropyLoss:
@@ -138,7 +196,10 @@ class Trainer:
             log.info(f"  Using weighted loss: {weights.tolist()}")
         else:
             weights = None
-        return nn.CrossEntropyLoss(weight=weights)
+        ls = getattr(self.cfg, "label_smoothing", 0.0)
+        if ls > 0.0:
+            log.info(f"  Label smoothing: {ls}")
+        return nn.CrossEntropyLoss(weight=weights, label_smoothing=ls)
 
     def fit(self, train_loader, val_loader, test_loader) -> dict:
         cfg         = self.cfg
@@ -298,12 +359,16 @@ class Trainer:
             self.writer.add_scalar("val/accuracy",
                                 val_metrics.get("val/accuracy", 0), global_step)
 
+            # Fallback to roc_auc_macro for multiclass (Exp3)
+            _auc = (val_metrics.get("val/roc_auc")
+                    or val_metrics.get("val/roc_auc_macro"))
+            _auc_str = f"{_auc:.4f}" if _auc is not None else "nan"
             log_epoch.info(
                 f"  Ep {epoch:03d}/{self.cfg.num_epochs} | "
                 f"loss {val_loss:.4f} | "
                 f"acc {val_metrics.get('val/accuracy', 0):.4f} | "
                 f"f1 {val_metrics.get('val/f1_macro', 0):.4f} | "
-                f"auc {val_metrics.get('val/roc_auc', float('nan')):.4f} | "
+                f"auc {_auc_str} | "
                 f"{elapsed:.1f}s"
             )
 
@@ -449,6 +514,10 @@ class Trainer:
             split_name,
         )
         metrics[f"{split_name}/loss"] = avg_loss
+        
+        # Store raw arrays so the reporter can draw actual ROC curves
+        metrics[f"{split_name}/all_probs"]  = np.array(all_probs)
+        metrics[f"{split_name}/all_labels"] = np.array(all_labels)
 
         # ── Per-audio-type breakdown (test split only, Option B) ───────────
         if split_name == "test" and len(all_audio_cols) == len(all_labels):

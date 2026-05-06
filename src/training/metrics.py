@@ -76,8 +76,10 @@ def compute_metrics(all_labels: List[int],
             log.warning(f"ROC-AUC computation failed: {e}")
  
     # ── Console: one-line summary (always visible) ────────────────────
-    auc_str = (f" | auc {metrics[f'{split_name}/roc_auc']:.4f}"
-               if f"{split_name}/roc_auc" in metrics else "")
+    _auc_val = (metrics.get(f"{split_name}/roc_auc")
+                or metrics.get(f"{split_name}/roc_auc_macro"))
+    auc_str = f" | auc {_auc_val:.4f}" if _auc_val is not None else ""
+    
     log.info(
         f"  [{split_name.upper():5s}] acc {accuracy:.4f} | "
         f"f1 {f1_macro:.4f}{auc_str}"
