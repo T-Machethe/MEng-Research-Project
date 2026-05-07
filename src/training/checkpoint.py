@@ -26,6 +26,7 @@ def load_checkpoint(path: str, model, optimizer=None, scheduler=None):
             np.ndarray,
             np._core.multiarray._reconstruct,
             np.dtype,
+            np.dtypes.Float32DType,
         ])
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(ckpt["model"])

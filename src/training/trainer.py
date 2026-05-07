@@ -223,6 +223,7 @@ class Trainer:
                 np.ndarray,
                 np._core.multiarray._reconstruct,
                 np.dtype,
+                np.dtypes.Float32DType,
             ])
             ckpt = torch.load(
                 resume_path,
@@ -618,6 +619,7 @@ class Trainer:
             np.ndarray,
             np._core.multiarray._reconstruct,
             np.dtype,
+            np.dtypes.Float32DType,
         ])
         ckpt = torch.load(
             path,
