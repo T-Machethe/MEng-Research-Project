@@ -228,7 +228,7 @@ class Trainer:
             ckpt = torch.load(
                 resume_path,
                 map_location=self.device,
-                weights_only=True,
+                weights_only=False,
             )
             self.model.load_state_dict(ckpt["model"],strict=False)
             self.optimizer.load_state_dict(ckpt["optimizer"])
