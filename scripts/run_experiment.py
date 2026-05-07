@@ -77,7 +77,7 @@ def _setup_logging(log_dir: str = None, verbose_console: bool = False):
     root.handlers.clear()
  
     # ── Console handler ───────────────────────────────────────────────────
-    ch = logging.StreamHandler()
+    ch = logging.StreamHandler(sys.stdout)   # ← stdout, not stderr
     ch.setLevel(logging.INFO if verbose_console else logging.WARNING)
     ch.setFormatter(fmt_console)
     root.addHandler(ch)
@@ -87,8 +87,8 @@ def _setup_logging(log_dir: str = None, verbose_console: bool = False):
     # always appears on the console regardless of the WARNING threshold.
     es = logging.getLogger("epoch_summary")
     es.setLevel(logging.DEBUG)
-    es.propagate = False               # don't double-print via root
-    es_ch = logging.StreamHandler()
+    es.propagate = False
+    es_ch = logging.StreamHandler(sys.stdout)   # ← stdout, not stderr
     es_ch.setLevel(logging.INFO)
     es_ch.setFormatter(fmt_console)
     es.addHandler(es_ch)
