@@ -1,5 +1,6 @@
 import json
 import torch
+import numpy as np
 from pathlib import Path as _Path
 import logging
  
@@ -21,6 +22,11 @@ def save_checkpoint(model, optimizer, scheduler,
  
  
 def load_checkpoint(path: str, model, optimizer=None, scheduler=None):
+    torch.serialization.add_safe_globals([
+            np.ndarray,
+            np._core.multiarray._reconstruct,
+            np.dtype,
+        ])
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(ckpt["model"])
     if optimizer and ckpt.get("optimizer"):
