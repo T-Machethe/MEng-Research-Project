@@ -219,6 +219,11 @@ class Trainer:
         resume_path = self.output_dir / "latest_checkpoint.pt"
         if resume_path.exists():
             log.info(f"\n  Resuming from {resume_path}")
+            torch.serialization.add_safe_globals([
+                np.ndarray,
+                np._core.multiarray._reconstruct,
+                np.dtype,
+            ])
             ckpt = torch.load(
                 resume_path,
                 map_location=self.device,
@@ -609,6 +614,11 @@ class Trainer:
             )
             raise FileNotFoundError(f"No checkpoint at {path}")
 
+         torch.serialization.add_safe_globals([
+            np.ndarray,
+            np._core.multiarray._reconstruct,
+            np.dtype,
+        ])
         ckpt = torch.load(
             path,
             map_location=self.device,
