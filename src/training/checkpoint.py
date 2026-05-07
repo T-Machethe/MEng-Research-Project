@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from pathlib import Path as _Path
 import logging
+log = logging.getLogger(__name__)
  
  
 def save_checkpoint(model, optimizer, scheduler,
@@ -28,7 +29,7 @@ def load_checkpoint(path: str, model, optimizer=None, scheduler=None):
             np.dtype,
             np.dtypes.Float32DType,
         ])
-    ckpt = torch.load(path, map_location="cpu", weights_only=True)
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model"])
     if optimizer and ckpt.get("optimizer"):
         optimizer.load_state_dict(ckpt["optimizer"])

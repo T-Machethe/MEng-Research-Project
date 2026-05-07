@@ -624,7 +624,7 @@ class Trainer:
         ckpt = torch.load(
             path,
             map_location=self.device,
-            weights_only=True,
+            weights_only=False,
         )
         self.model.load_state_dict(ckpt["model"],strict=False)
         log.info(f"  Loaded → {filename}  "
