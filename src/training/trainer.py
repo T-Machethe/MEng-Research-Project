@@ -613,8 +613,8 @@ class Trainer:
                 f"checkpoint was ever saved. Check for NaN in your input segments."
             )
             raise FileNotFoundError(f"No checkpoint at {path}")
-
-         torch.serialization.add_safe_globals([
+        
+        torch.serialization.add_safe_globals([
             np.ndarray,
             np._core.multiarray._reconstruct,
             np.dtype,
