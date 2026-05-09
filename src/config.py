@@ -15,7 +15,7 @@ MIN_DURATION_S = 0.3        # skip files shorter than 300ms entirely —
                              # they are too short to produce any 8192-sample
                              # segment and are likely recording errors
 
-WINDOW_SAMPLES     = 8192
+WINDOW_SAMPLES     = 49152
 HOP_SAMPLES        = WINDOW_SAMPLES // 2
 FINETUNE_MIN_S     = 15.0
 FINETUNE_MAX_S     = 20.0
