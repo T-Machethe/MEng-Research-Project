@@ -10,48 +10,103 @@ from transformers import (
     Wav2Vec2Model,
     get_linear_schedule_with_warmup,
 )
-
+ 
 import logging
 log = logging.getLogger(__name__)
 log_epoch = logging.getLogger("epoch_summary")   # always visible on console
-
+ 
 from src.training.metrics import compute_metrics
-
+ 
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for imbalanced classification.
+ 
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+ 
+    gamma=0 → standard cross entropy.
+    gamma=2 → standard setting; down-weights easy examples strongly.
+ 
+    Handles both binary and multiclass. class_weights play the role
+    of alpha per class. With gamma>0 the loss focuses gradient updates
+    on misclassified or uncertain samples, which is exactly what we
+    need given the 75/25 class split and the scratch model's tendency
+    to exploit the majority class.
+    """
+ 
+    def __init__(self, gamma: float = 2.0,
+                 weight: torch.Tensor = None,
+                 label_smoothing: float = 0.0):
+        super().__init__()
+        self.gamma           = gamma
+        self.weight          = weight
+        self.label_smoothing = label_smoothing
+ 
+    def forward(self, logits: torch.Tensor,
+                targets: torch.Tensor) -> torch.Tensor:
+        # Standard CE with class weights (handles imbalance baseline)
+        ce = nn.functional.cross_entropy(
+            logits, targets,
+            weight=self.weight,
+            label_smoothing=self.label_smoothing,
+            reduction="none",
+        )
+        # p_t = exp(-CE) — probability assigned to the correct class
+        pt      = torch.exp(-ce)
+        # Focal term: down-weight easy examples
+        focal   = ((1.0 - pt) ** self.gamma) * ce
+        return focal.mean()
+ 
+ 
 class Wav2Vec2Classifier(nn.Module):
     """
     wav2vec 2.0 backbone with a custom classification head.
-
+ 
     Defined at module level (not inside _build_model) so it is
     picklable on Windows multiprocessing and can be saved/loaded
     cleanly with torch.save / torch.load.
     """
-
-    def __init__(self, backbone, hidden_size: int, num_classes: int):
+ 
+    def __init__(self, backbone, hidden_size: int, num_classes: int,
+                 proj_size: int = 256):
         super().__init__()
         self.backbone   = backbone
-        self.dropout    = nn.Dropout(p=0.1)
-        self.classifier = nn.Linear(hidden_size, num_classes)
-
+        # MLP head: bottleneck projection → LayerNorm → ReLU → Dropout → classify
+        # Replaces the single Linear layer.
+        # Benefits:
+        #   Scratch: bottleneck forces the model to compress rather than memorise
+        #   Finetune: more expressive head without touching pretrained backbone
+        self.head = nn.Sequential(
+            nn.Linear(hidden_size, proj_size),
+            nn.LayerNorm(proj_size),
+            nn.ReLU(),
+            nn.Dropout(p=0.3),
+            nn.Linear(proj_size, num_classes),
+        )
+ 
+    @property
+    def classifier(self):
+        """Compatibility alias so existing code that reads .classifier still works."""
+        return self.head
+ 
     def forward(self, input_values, attention_mask=None):
         outputs = self.backbone(
             input_values=input_values,
             attention_mask=attention_mask,
         )
-        # Mean-pool over latent time frames [B, T', H] → [B, H]
+        # Mean-pool over time frames [B, T', H] → [B, H]
         hidden = outputs.last_hidden_state.mean(dim=1)
-        hidden = self.dropout(hidden)
-        return self.classifier(hidden)   # [B, num_classes]
-
-
+        return self.head(hidden)   # [B, num_classes]
+ 
+ 
 class Trainer:
     """
     Shared training loop for all five experiments.
-
+ 
     Supports both scratch and fine-tuning modes.
     Handles class-weighted loss, gradient clipping,
     LR scheduling, early stopping, and checkpointing.
     """
-
+ 
     def __init__(self, cfg, num_classes: int,
                  class_weights=None, output_dir: str = "."):
         self.cfg         = cfg
@@ -65,17 +120,17 @@ class Trainer:
         self.writer      = SummaryWriter(
             log_dir=str(self.output_dir / "tensorboard")
         )
-
+ 
     def _resolve_device(self, device_str: str) -> torch.device:
         if device_str == "auto":
             return torch.device(
                 "cuda" if torch.cuda.is_available() else "cpu"
             )
         return torch.device(device_str)
-
+ 
     def _build_model(self) -> Wav2Vec2Classifier:
         cfg = self.cfg
-
+ 
         if cfg.mode == "scratch":
             config   = Wav2Vec2Config(
                 hidden_size=768,
@@ -83,7 +138,7 @@ class Trainer:
                 num_attention_heads=12,
             )
             backbone = Wav2Vec2Model(config)
-
+ 
         else:
             # Load backbone only — no lm_head, no vocabulary-size mismatch.
             # mask_time_prob / mask_feature_prob MUST be 0.0 for fine-tuning:
@@ -103,29 +158,29 @@ class Trainer:
             if cfg.freeze_encoder:
                 backbone.feature_extractor.requires_grad_(False)
                 backbone.feature_projection.requires_grad_(False)
-
+ 
             for i, layer in enumerate(backbone.encoder.layers):
                 if i < cfg.freeze_layers:
                     for p in layer.parameters():
                         p.requires_grad = False
-
+ 
         hidden_size = backbone.config.hidden_size
         model       = Wav2Vec2Classifier(backbone, hidden_size,
                                          self.num_classes)
-
+ 
         n_train = sum(p.numel() for p in model.parameters()
                       if p.requires_grad)
         n_total = sum(p.numel() for p in model.parameters())
         log.info(f"  Model: {n_train/1e6:.2f}M / "
                  f"{n_total/1e6:.2f}M trainable.")
         return model.to(self.device)
-
+ 
     def _build_optimizer(self) -> AdamW:
         cfg   = self.cfg
         lr    = cfg.learning_rate
         decay = getattr(cfg, "layerwise_lr_decay", 1.0)
         wd    = cfg.weight_decay
-
+ 
         if cfg.mode == "finetune" and decay < 1.0:
             
             # Layer-wise LR decay: classifier head gets full lr,
@@ -134,13 +189,13 @@ class Trainer:
             # in lower layers while allowing the head to adapt freely.
             
             param_groups = []
-
+ 
             # Classifier head — full lr
             param_groups.append({
                 "params": list(self.model.classifier.parameters()),
                 "lr": lr,
             })
-
+ 
             # Transformer encoder layers — top to bottom
             enc_layers = self.model.backbone.encoder.layers
             n = len(enc_layers)
@@ -149,7 +204,7 @@ class Trainer:
                     "params": list(layer.parameters()),
                     "lr": lr * (decay ** (i + 1)),
                 })
-
+ 
             # Feature projection
             param_groups.append({
                 "params": list(
@@ -157,7 +212,7 @@ class Trainer:
                 ),
                 "lr": lr * (decay ** (n + 1)),
             })
-
+ 
             # Feature extractor — only if not frozen
             
             fe_params = [
@@ -170,7 +225,7 @@ class Trainer:
                     "params": fe_params,
                     "lr": lr * (decay ** (n + 2)),
                 })
-
+ 
             log.info(
                 f"  Layer-wise LR decay={decay}: "
                 f"head={lr:.2e}, "
@@ -181,25 +236,33 @@ class Trainer:
                 param_groups, weight_decay=wd,
                 betas=(0.9, 0.98), eps=1e-8
             )
-
+ 
         # Scratch or no decay — uniform lr
         trainable = [p for p in self.model.parameters() if p.requires_grad]
         return AdamW(
             trainable, lr=lr, weight_decay=wd,
             betas=(0.9, 0.98), eps=1e-8
         )
-
-    def _build_loss(self, class_weights) -> nn.CrossEntropyLoss:
+ 
+    def _build_loss(self, class_weights):
         if class_weights is not None:
             weights = class_weights.to(self.device)
             log.info(f"  Using weighted loss: {weights.tolist()}")
         else:
             weights = None
-        ls = getattr(self.cfg, "label_smoothing", 0.0)
-        if ls > 0.0:
-            log.info(f"  Label smoothing: {ls}")
-        return nn.CrossEntropyLoss(weight=weights, label_smoothing=ls)
-
+        ls    = getattr(self.cfg, "label_smoothing", 0.0)
+        gamma = getattr(self.cfg, "focal_gamma", 2.0)
+        use_focal = getattr(self.cfg, "use_focal_loss", True)
+ 
+        if use_focal:
+            log.info(f"  Focal Loss: gamma={gamma}, label_smoothing={ls}")
+            return FocalLoss(gamma=gamma, weight=weights,
+                             label_smoothing=ls)
+        else:
+            if ls > 0.0:
+                log.info(f"  Label smoothing: {ls}")
+            return nn.CrossEntropyLoss(weight=weights, label_smoothing=ls)
+ 
     def fit(self, train_loader, val_loader, test_loader) -> dict:
         cfg         = self.cfg
         total_steps = len(train_loader) * cfg.num_epochs
@@ -208,8 +271,12 @@ class Trainer:
             num_warmup_steps=cfg.warmup_steps,
             num_training_steps=total_steps,
         )
-
-        best_val_loss    = float("inf")
+ 
+        # Early stopping tracks val_f1 (higher=better) or val_loss (lower=better)
+        _stop_metric   = getattr(cfg, "early_stop_metric", "val_f1")
+        _higher_better = (_stop_metric == "val_f1")
+        best_val_metric  = float("-inf") if _higher_better else float("inf")
+        best_val_loss    = float("inf")   # kept for checkpoint compat
         patience_counter = 0
         global_step      = 0
         val_metrics      = {}
@@ -234,13 +301,14 @@ class Trainer:
             self.optimizer.load_state_dict(ckpt["optimizer"])
             if ckpt.get("scheduler") and self.scheduler:
                 self.scheduler.load_state_dict(ckpt["scheduler"])
-
+ 
             start_epoch      = ckpt["epoch"] + 1
             best_val_loss    = ckpt.get("best_val_loss", float("inf"))
+            best_val_metric  = ckpt.get("best_val_metric", best_val_metric)
             patience_counter = ckpt.get("patience_counter", 0)
             global_step      = ckpt.get("global_step", 0)
             all_train_metrics = ckpt.get("train_history", [])
-
+ 
             log.info(
                 f"  Resumed at epoch {start_epoch} | "
                 f"best_val_loss so far: {best_val_loss:.4f} | "
@@ -250,19 +318,65 @@ class Trainer:
             log.info("  No checkpoint found — starting from epoch 1.")
             
             
+        # Head warmup bookkeeping (finetune only)
+        _warmup_epochs = getattr(cfg, "head_warmup_epochs", 0)
+        _warmup_active = (cfg.mode == "finetune" and _warmup_epochs > 0)
+ 
         for epoch in range(1, cfg.num_epochs + 1):
-
+ 
+            # ── Two-phase finetune: head-only warmup ───────────────────────
+            # For the first head_warmup_epochs, freeze everything except the
+            # classifier head. This prevents the pretrained representations
+            # from being destroyed by a randomly-initialised head producing
+            # large gradients from epoch 1, which causes the observed class
+            # collapse (model predicts only one class from step 0).
+            if _warmup_active:
+                if epoch <= _warmup_epochs:
+                    if epoch == 1:
+                        log.info(
+                            f"  [Head warmup] Freezing backbone for "
+                            f"epochs 1-{_warmup_epochs}. "
+                            f"Only classifier head will train."
+                        )
+                    for p in self.model.backbone.parameters():
+                        p.requires_grad_(False)
+                else:
+                    if epoch == _warmup_epochs + 1:
+                        log.info(
+                            f"  [Head warmup] Epoch {epoch}: unfreezing backbone "
+                            f"with layer-wise LR decay."
+                        )
+                        # Restore trainability per original freeze_layers config
+                        for p in self.model.backbone.parameters():
+                            p.requires_grad_(True)
+                        if cfg.freeze_encoder:
+                            self.model.backbone.feature_extractor.requires_grad_(False)
+                            self.model.backbone.feature_projection.requires_grad_(False)
+                        for i, layer in enumerate(
+                            self.model.backbone.encoder.layers
+                        ):
+                            if i < cfg.freeze_layers:
+                                for p in layer.parameters():
+                                    p.requires_grad_(False)
+                        # Rebuild optimizer so new param groups have correct LRs
+                        self.optimizer = self._build_optimizer()
+                        self.scheduler = get_linear_schedule_with_warmup(
+                            self.optimizer,
+                            num_warmup_steps=cfg.warmup_steps,
+                            num_training_steps=total_steps,
+                        )
+ 
             # ── Train ─────────────────────────────────────────────────────────
             self.model.train()
             epoch_loss  = 0.0
             t0          = time.time()
-
+ 
             # Collect predictions during training for metric computation
             train_labels, train_preds, train_probs = [], [], []
-
+ 
             for batch in train_loader:
                 labels = batch["labels"].to(self.device)
-
+ 
                 # ── Paired batch (Exp 4): concatenate pre/post along batch dim
                 if "input_values_1" in batch:
                     iv1 = torch.nan_to_num(
@@ -288,14 +402,14 @@ class Trainer:
                         input_values=input_values,
                         attention_mask=attention_mask,
                     )
-
+ 
                 loss = self.loss_fn(logits, labels)
-
+ 
                 if not torch.isfinite(loss):
                     log.warning(f"  NaN/Inf loss at step {global_step} — skipping.")
                     self.optimizer.zero_grad()
                     continue
-
+ 
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(
@@ -303,10 +417,10 @@ class Trainer:
                 )
                 self.optimizer.step()
                 self.scheduler.step()
-
+ 
                 epoch_loss  += loss.item()
                 global_step += 1
-
+ 
                 # Collect training predictions for epoch-level metrics
                 with torch.no_grad():
                     probs = torch.softmax(logits, dim=-1).cpu().numpy()
@@ -314,7 +428,7 @@ class Trainer:
                 train_labels.extend(labels.cpu().tolist())
                 train_preds.extend(preds)
                 train_probs.extend(probs)
-
+ 
                 if global_step % cfg.log_every == 0:
                     lr = self.scheduler.get_last_lr()[0]
                     self.writer.add_scalar("train/loss", loss.item(), global_step)
@@ -322,9 +436,9 @@ class Trainer:
                         f"  Ep {epoch:03d}  step {global_step:05d}  "
                         f"loss {loss.item():.4f}  lr {lr:.2e}"
                     )
-
+ 
             avg_train_loss = epoch_loss / max(len(train_loader), 1)
-
+ 
             # ── Compute training metrics for this epoch ────────────────────────
             train_metrics = compute_metrics(
                 train_labels, train_preds,
@@ -333,24 +447,24 @@ class Trainer:
                 split_name="train",
             )
             train_metrics["train/loss"] = avg_train_loss
-
+ 
             # Log training metrics to TensorBoard
             self.writer.add_scalar("train/accuracy",
                                 train_metrics["train/accuracy"], global_step)
             self.writer.add_scalar("train/f1_macro",
                                 train_metrics["train/f1_macro"], global_step)
-
+ 
             log.debug(
                 f"  Epoch {epoch:03d} TRAIN | "
                 f"loss {avg_train_loss:.4f} | "
                 f"acc {train_metrics['train/accuracy']:.4f} | "
                 f"f1 {train_metrics['train/f1_macro']:.4f}"
             )
-
+ 
             # ── Validate ──────────────────────────────────────────────────────
             val_metrics = self._evaluate(val_loader, "val")
             val_loss    = val_metrics.get("val/loss", float("inf"))
-
+ 
             # Store both train AND val metrics per epoch so the reporter
             # can plot val curves (not just a flat line from the last epoch)
             all_train_metrics.append({
@@ -359,11 +473,11 @@ class Trainer:
                 **val_metrics,   # ← adds val/loss, val/accuracy, val/f1_macro
             })
             elapsed     = time.time() - t0
-
+ 
             self.writer.add_scalar("val/loss",     val_loss,   global_step)
             self.writer.add_scalar("val/accuracy",
                                 val_metrics.get("val/accuracy", 0), global_step)
-
+ 
             # Fallback to roc_auc_macro for multiclass (Exp3)
             _auc = (val_metrics.get("val/roc_auc")
                     or val_metrics.get("val/roc_auc_macro"))
@@ -376,7 +490,7 @@ class Trainer:
                 f"auc {_auc_str} | "
                 f"{elapsed:.1f}s"
             )
-
+ 
             # ── Checkpoint ────────────────────────────────────────────────────
             # Every-epoch checkpoint
             if epoch % cfg.save_every == 0:
@@ -386,36 +500,76 @@ class Trainer:
                         patience_counter=patience_counter,
                         global_step=global_step,
                         train_history=all_train_metrics)
-
-            # Best model checkpoint
+ 
+            # Best model checkpoint — track val_F1 (or val_loss if configured)
+            val_f1_now  = val_metrics.get("val/f1_macro", 0.0)
+            if _higher_better:
+                current_metric = val_f1_now
+                improved       = current_metric > best_val_metric
+            else:
+                current_metric = val_loss
+                improved       = current_metric < best_val_metric
+ 
             if val_loss < best_val_loss:
-                best_val_loss    = val_loss
+                best_val_loss = val_loss
+ 
+            if improved:
+                best_val_metric  = current_metric
                 patience_counter = 0
                 self._save(epoch, val_loss,
                         "best_model.pt",
                         best_val_loss=best_val_loss,
+                        best_val_metric=best_val_metric,
                         patience_counter=patience_counter,
                         global_step=global_step,
                         train_history=all_train_metrics)
-                log.info(f"  ★ New best val_loss: {best_val_loss:.4f}")
+                metric_label = "val_f1" if _higher_better else "val_loss"
+                log.info(f"  ★ New best {metric_label}: {best_val_metric:.4f}")
             else:
                 patience_counter += 1
-                # Still save latest so resume works even on non-best epochs
                 self._save(epoch, val_loss,
                         f"epoch_{epoch:03d}.pt",
                         best_val_loss=best_val_loss,
+                        best_val_metric=best_val_metric,
                         patience_counter=patience_counter,
                         global_step=global_step,
                         train_history=all_train_metrics)
                 if patience_counter >= cfg.early_stop_patience:
                     log.info(f"  Early stopping at epoch {epoch}.")
                     break
-
+ 
         # ── Final test evaluation ─────────────────────────────────────────
         log.info("\\n  Loading best model for test evaluation...")
         self._load("best_model.pt")
         test_metrics = self._evaluate(test_loader, "test")
-
+ 
+        # ── Step 5a: Threshold calibration (binary only) ──────────────────
+        val_probs_arr  = val_metrics.get("val/all_probs")
+        val_labels_arr = val_metrics.get("val/all_labels")
+        test_probs_arr = test_metrics.get("test/all_probs")
+        test_labels_arr = test_metrics.get("test/all_labels")
+ 
+        if (val_probs_arr is not None and test_probs_arr is not None
+                and self.num_classes == 2):
+            try:
+                from src.training.eval_utils import calibrate_threshold
+                thresh_results = calibrate_threshold(
+                    val_probs   = val_probs_arr,
+                    val_labels  = val_labels_arr,
+                    test_probs  = test_probs_arr,
+                    test_labels = test_labels_arr,
+                    num_classes = self.num_classes,
+                )
+                test_metrics["test/threshold_calibration"] = thresh_results
+            except Exception as e:
+                log.warning(f"  Threshold calibration failed (non-fatal): {e}")
+ 
+        # ── Step 5b: Patient-level vote aggregation ───────────────────────
+        # patient_ids are stored by the dataloader if present in the batch
+        # For now we use a placeholder — requires patient_ids in test batches
+        # (see dataloader extension note in eval_utils.py)
+        # This will produce useful results once patient_id is added to batches.
+ 
         # ── Print epoch-by-epoch training summary ─────────────────────────
         log.info(f"\\n{'═'*72}")
         log.info("  TRAINING HISTORY (per epoch)")
@@ -433,9 +587,9 @@ class Trainer:
                 f"{em.get('train/f1_macro', 0):>8.4f}"
             )
         log.info(f"{'═'*72}\\n")
-
+ 
         self.writer.close()
-
+ 
         all_results = {
             "best_val_loss":    best_val_loss,
             "training_history": all_train_metrics,
@@ -443,7 +597,7 @@ class Trainer:
             **val_metrics,
             **test_metrics,
         }
-
+ 
         # ── Generate plots and PDF report ─────────────────────────────────
         try:
             from src.training.reporter import ExperimentReporter
@@ -477,20 +631,20 @@ class Trainer:
                 all_results["svm"] = svm_results
             except Exception as e:
                 log.warning(f"  SVM failed (non-fatal): {e}")
-
+ 
         return all_results
-
+ 
     @torch.no_grad()
     def _evaluate(self, loader, split_name: str) -> dict:
         from src.training.metrics import compute_metrics, evaluate_by_audio_type
-
+ 
         self.model.eval()
         total_loss = 0.0
         all_labels, all_preds, all_probs, all_audio_cols = [], [], [], []
-
+ 
         for batch in loader:
             labels = batch["labels"].to(self.device)
-
+ 
             # ── Paired batch (Exp 4) ──────────────────────────────────────
             if "input_values_1" in batch:
                 iv1 = torch.nan_to_num(
@@ -515,22 +669,22 @@ class Trainer:
                     input_values=input_values,
                     attention_mask=attention_mask,
                 )   # [B, num_classes]
-
+ 
             loss        = self.loss_fn(logits, labels)
             total_loss += loss.item()
-
+ 
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
             preds = logits.argmax(dim=-1).cpu().tolist()
-
+ 
             all_labels.extend(labels.cpu().tolist())
             all_preds.extend(preds)
             all_probs.extend(probs)
-
+ 
             # Collect audio_col tags stored by the collate_fn
             batch_cols = batch.get("audio_cols", [])
             if batch_cols:
                 all_audio_cols.extend(batch_cols)
-
+ 
         avg_loss = total_loss / max(len(loader), 1)
         metrics  = compute_metrics(
             all_labels,
@@ -544,7 +698,7 @@ class Trainer:
         # Store raw arrays so the reporter can draw actual ROC curves
         metrics[f"{split_name}/all_probs"]  = np.array(all_probs)
         metrics[f"{split_name}/all_labels"] = np.array(all_labels)
-
+ 
         # ── Per-audio-type breakdown (test split only, Option B) ───────────
         if split_name == "test" and len(all_audio_cols) == len(all_labels):
             try:
@@ -559,40 +713,42 @@ class Trainer:
                 metrics["test/per_audio_type"] = per_type
             except Exception as e:
                 log.warning(f"  Per-audio-type evaluation failed (non-fatal): {e}")
-
+ 
         return metrics
-
+ 
     # ── Internal checkpoint helpers ───────────────────────────────────────
-
+ 
     def _save(self, epoch: int, val_loss: float, filename: str,
             best_val_loss: float = None,
+            best_val_metric: float = None,
             patience_counter: int = 0,
             global_step: int = 0,
             train_history: list = None):
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
+ 
         ckpt = {
-            "epoch":           epoch,
-            "val_loss":        val_loss,
-            "model":           self.model.state_dict(),
-            "optimizer":       self.optimizer.state_dict(),
-            "scheduler":       self.scheduler.state_dict()
-                            if self.scheduler else None,
-            # ── Resume state ──────────────────────────────────────────────
-            "best_val_loss":   best_val_loss or val_loss,
+            "epoch":            epoch,
+            "val_loss":         val_loss,
+            "model":            self.model.state_dict(),
+            "optimizer":        self.optimizer.state_dict(),
+            "scheduler":        self.scheduler.state_dict()
+                             if self.scheduler else None,
+            # ── Resume state ─────────────────────────────────────────────
+            "best_val_loss":    best_val_loss or val_loss,
+            "best_val_metric":  best_val_metric,
             "patience_counter": patience_counter,
-            "global_step":     global_step,
-            "train_history":   train_history or [],
+            "global_step":      global_step,
+            "train_history":    train_history or [],
         }
-
+ 
         torch.save(ckpt, self.output_dir / filename)
-
+ 
         # Always overwrite latest_checkpoint.pt so resume always picks up
         # the most recent epoch regardless of whether it was the best
         torch.save(ckpt, self.output_dir / "latest_checkpoint.pt")
-
+ 
         log.debug(f"  Checkpoint saved → {filename}")
-
+ 
         # ── Prune old epoch checkpoints to save Drive space ───────────────
         keep_n = getattr(self.cfg, "keep_last_n", 2)
         epoch_ckpts = sorted(
@@ -606,7 +762,7 @@ class Trainer:
         
     def _load(self, filename: str):
         path = self.output_dir / filename
-
+ 
         if not path.exists():
             log.error(
                 f"Checkpoint not found: {path}\n"

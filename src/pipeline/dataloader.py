@@ -19,12 +19,19 @@ def collate_standard(batch):
  
     padded, masks = [], []
     for w in waveforms:
+        w = w.squeeze(0)
+        # Per-sample normalisation: wav2vec 2.0 expects zero-mean unit-variance
+        # waveforms. Without this, pretrained features produce biased activations
+        # leading to class collapse in finetune mode.
+        std = w.std()
+        if std > 1e-8:
+            w = (w - w.mean()) / std
         pad_len = max_len - w.shape[-1]
         mask    = torch.ones(w.shape[-1], dtype=torch.long)
         if pad_len > 0:
             w    = TF.pad(w, (0, pad_len))
             mask = TF.pad(mask, (0, pad_len))
-        padded.append(w.squeeze(0))
+        padded.append(w)
         masks.append(mask)
  
     return {
@@ -46,12 +53,16 @@ def collate_paired(batch):
     def pad_seq(seqs):
         out, masks = [], []
         for w in seqs:
+            w = w.squeeze(0)
+            std = w.std()
+            if std > 1e-8:
+                w = (w - w.mean()) / std
             pad_len = max_len - w.shape[-1]
             mask    = torch.ones(w.shape[-1], dtype=torch.long)
             if pad_len > 0:
                 w    = TF.pad(w, (0, pad_len))
                 mask = TF.pad(mask, (0, pad_len))
-            out.append(w.squeeze(0))
+            out.append(w)
             masks.append(mask)
         return torch.stack(out), torch.stack(masks)
  
@@ -156,4 +167,3 @@ def build_experiment_loaders(
     )
  
     return train_loader, val_loader, test_loader
- 

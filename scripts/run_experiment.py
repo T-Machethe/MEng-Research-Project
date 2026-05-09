@@ -166,9 +166,13 @@ def build_config(args) -> ExperimentConfig:
         save_every         = args.save_every,
         keep_last_n        = args.keep_last_n,
         num_workers        = 2,   # set to 0 for CPU/Windows testing
-        label_smoothing    = args.label_smoothing,
-        layerwise_lr_decay = args.layerwise_lr_decay,
-        use_svm            = args.use_svm,
+        label_smoothing     = args.label_smoothing,
+        layerwise_lr_decay  = args.layerwise_lr_decay,
+        early_stop_metric   = args.early_stop_metric,
+        head_warmup_epochs  = args.head_warmup_epochs,
+        use_focal_loss      = args.use_focal_loss,
+        focal_gamma         = args.focal_gamma,
+        use_svm             = args.use_svm,
         svm_C              = args.svm_C,
         svm_kernel         = args.svm_kernel,
     )
@@ -484,6 +488,15 @@ def main():
                         help="Label smoothing for CrossEntropyLoss (default 0.1).")
     parser.add_argument("--layerwise_lr_decay", type=float, default=0.8,
                         help="Layer-wise LR decay for finetune (default 0.8).")
+    parser.add_argument("--early_stop_metric", type=str, default="val_f1",
+                        choices=["val_f1", "val_loss"],
+                        help="Metric for early stopping (default val_f1).")
+    parser.add_argument("--head_warmup_epochs", type=int, default=3,
+                        help="Finetune: train head only for N epochs first (default 3).")
+    parser.add_argument("--use_focal_loss",  action="store_true", default=True,
+                        help="Use Focal Loss instead of CrossEntropy (default True).")
+    parser.add_argument("--focal_gamma",     type=float, default=2.0,
+                        help="Focal Loss gamma parameter (default 2.0).")
     parser.add_argument("--verbose",       action="store_true", default=False,
                         help="Print full INFO logs to console (default: only epoch summaries).")
     parser.add_argument("--use_svm",    action="store_true", default=False,

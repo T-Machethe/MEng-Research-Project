@@ -51,11 +51,15 @@ class ExperimentConfig:
     weight_decay:        float = 1e-2
     label_smoothing:     float = 0.1    # prevents class collapse in finetune
     layerwise_lr_decay:  float = 0.8    # lower transformer layers get smaller LR
-    use_svm:             bool  = False  # run SVM on finetune embeddings
+    use_focal_loss:       bool  = True    # use Focal Loss instead of CrossEntropy
+    focal_gamma:          float = 2.0     # Focal Loss focusing parameter
+    use_svm:              bool  = False   # run SVM on finetune embeddings
     svm_C:               float = 1.0    # SVM regularisation
     svm_kernel:          str   = "rbf"  # 'rbf' or 'linear'
     max_grad_norm:       float = 1.0
-    early_stop_patience: int = 5
+    early_stop_patience:  int   = 5
+    early_stop_metric:    str   = "val_f1"   # "val_f1" (recommended) or "val_loss"
+    head_warmup_epochs:   int   = 3           # finetune: train classifier head only for N epochs first
 
     # ── Split ──────────────────────────────────────────────────────────────
     test_size:     float = 0.20
