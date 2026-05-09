@@ -204,11 +204,23 @@ class BaseExperiment(ABC):
         if not self.results:
             log.warning("No results to report. Run run() first.")
             return
-
+ 
+        class _NumpyEncoder(json.JSONEncoder):
+            """Converts numpy arrays/scalars to JSON-serialisable types."""
+            def default(self, obj):
+                import numpy as np
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                if isinstance(obj, (np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (np.floating,)):
+                    return float(obj)
+                return super().default(obj)
+ 
         report_path = self.output_dir / "results_summary.json"
         with open(report_path, "w") as f:
-            json.dump(self.results, f, indent=2)
-
+            json.dump(self.results, f, indent=2, cls=_NumpyEncoder)
+ 
         log.info(f"\n{'─'*60}")
         log.info(f"  RESULTS — {self.name}")
         log.info(f"{'─'*60}")
@@ -218,7 +230,7 @@ class BaseExperiment(ABC):
             else:
                 log.info(f"  {k:<30} {v}")
         log.info(f"\n  Full results saved -> {report_path}")
-
+ 
     # ── Shared utilities ───────────────────────────────────────────────────
 
     def load_csv(self) -> pd.DataFrame:
