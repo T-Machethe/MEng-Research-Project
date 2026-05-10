@@ -84,7 +84,7 @@ plt.rcParams.update({
     "legend.edgecolor": GRID,
 })
 
-OUTPUT_DIR = PROJECT_ROOT / "Plots and visuals" / "diagnostics"
+OUTPUT_DIR = PROJECT_ROOT /"results"/ "Plots and visuals" / "diagnostics"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 GROUP_MAP = {
