@@ -73,10 +73,15 @@ def _find_file_in_dir(parent: Path, filename: str, col_key: str) -> Path:
     if not parent.exists():
         return parent / filename
 
+    # Only consider real audio files — never match .txt, .pdf, etc.
+    AUDIO_EXTS = {".wav"}
+
     name_lower = filename.lower()
 
-    # Level 1: case-insensitive exact name
+    # Level 1: case-insensitive exact name (.WAV / .Wav / .wav)
     for candidate in parent.iterdir():
+        if candidate.suffix.lower() not in AUDIO_EXTS:
+            continue
         if candidate.name.lower() == name_lower:
             return candidate
 
@@ -86,14 +91,18 @@ def _find_file_in_dir(parent: Path, filename: str, col_key: str) -> Path:
         return parent / filename  # can't do better
     id_str = id_match.group(1)   # e.g. "0012"
 
-    # Level 2: file contains both the patient ID and the audio column name
+    # Level 2: audio file containing both the patient ID and the column name
     for candidate in parent.iterdir():
+        if candidate.suffix.lower() not in AUDIO_EXTS:
+            continue
         cname = candidate.name.lower()
         if id_str in cname and col_key in cname:
             return candidate
 
-    # Level 3: file contains the patient ID alone (last resort)
+    # Level 3: audio file containing the patient ID alone (last resort)
     for candidate in parent.iterdir():
+        if candidate.suffix.lower() not in AUDIO_EXTS:
+            continue
         if id_str in candidate.name:
             return candidate
 
