@@ -154,3 +154,70 @@ def resolve_path(rel_path: str,
 
     # Multi-level fallback: case differences, filename prefix variants, etc.
     return _find_file_in_dir(path.parent, filename, col_key)
+
+
+# Maps the canonical group folder name to the prefix used in audio filenames.
+# e.g. group folder "Fess" → filename prefix "FESS" in FESS_ses1_a_0017.wav
+FILENAME_PREFIX_MAP = {
+    "Fess":    "FESS",
+    "Contr":   "Contr",
+    "Sept":    "Sept",
+    "Tonsill": "Tonsill",
+}
+
+
+def find_audio_file(group: str,
+                    session: int,
+                    patient_id,
+                    col: str,
+                    project_root: Union[str, Path]) -> Path:
+    """
+    Locate an audio file purely from row metadata, without a CSV path.
+
+    Used when the CSV cell for a given audio column is empty or NaN.
+    Constructs the expected canonical path and falls back to the same
+    ID+column fuzzy search as resolve_path.
+
+    Parameters
+    ----------
+    group       : raw GROUP value from the CSV row (e.g. "FESS", "Contr")
+    session     : session number (1, 2, or 3)
+    patient_id  : patient ID (numeric or string)
+    col         : audio column name (e.g. "a", "speech", "a3")
+    project_root: Drive root (resolve_path convention)
+
+    Returns
+    -------
+    Path to the audio file if found, or the expected canonical path
+    (which will not exist) so the caller can log it as MISSING.
+    """
+    project_root = Path(project_root)
+    col_key      = col.strip().lower()
+
+    if col_key not in COLUMN_TO_SUBFOLDER:
+        raise KeyError(f"Column '{col}' not in COLUMN_TO_SUBFOLDER.")
+
+    # Resolve canonical group directory name
+    group_dir = GROUP_DIR_MAP.get(str(group).strip(), str(group).strip())
+
+    # Construct subfolder path
+    category_parts = list(COLUMN_TO_SUBFOLDER[col_key])
+    if col_key in ("a1", "a2", "a3") and group_dir.lower() in SUSTAINED_CAPITAL_V_GROUPS:
+        category_parts[0] = "Sustained Vowels"
+
+    parent = project_root.joinpath(
+        "Data", CANONICAL_DATA_FOLDER, "Audios",
+        group_dir, *category_parts, str(session),
+    )
+
+    # Build expected filename using the canonical naming convention:
+    # {PREFIX}_ses{N}_{col}_{id:04d}.wav
+    prefix   = FILENAME_PREFIX_MAP.get(group_dir, group_dir)
+    id_str   = f"{int(patient_id):04d}"
+    expected = parent / f"{prefix}_ses{session}_{col_key}_{id_str}.wav"
+
+    if expected.exists():
+        return expected
+
+    # Fuzzy fallback — same three-level search as resolve_path
+    return _find_file_in_dir(parent, expected.name, col_key)

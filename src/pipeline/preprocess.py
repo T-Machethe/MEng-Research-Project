@@ -18,7 +18,7 @@ from src.audio.segmentation import (
     instance_normalize,
 )
 from src.audio.augmentation import augment_waveform
-from src.utils.paths import resolve_path
+from src.utils.paths import resolve_path, find_audio_file
 from src.config import TARGET_SR, MIN_DURATION_S
 
 
@@ -73,10 +73,25 @@ def process_from_csv(csv_path, project_root, output_dir,
             rel_path = row[col]
 
             if pd.isna(rel_path) or str(rel_path).strip() == "":
-                total_skipped_empty += 1
-                continue
-
-            abs_path = resolve_path(rel_path, project_root, col=col)
+                # Cell is empty — try to locate the file from row metadata
+                # (group, session, ID, col) before giving up entirely.
+                try:
+                    abs_path = find_audio_file(
+                        group      = row["GROUP"],
+                        session    = session,
+                        patient_id = subject_id,
+                        col        = col,
+                        project_root = project_root,
+                    )
+                    if not abs_path.exists():
+                        total_skipped_empty += 1
+                        continue
+                    # Found via metadata — proceed to processing below
+                except Exception:
+                    total_skipped_empty += 1
+                    continue
+            else:
+                abs_path = resolve_path(rel_path, project_root, col=col)
 
             if not Path(abs_path).exists():
                 print(f"[MISSING] ID={subject_id} SES={session} COL={col}")
