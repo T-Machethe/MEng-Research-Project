@@ -11,7 +11,7 @@ VAD_THRESHOLD  = 0.01       # reduced from 0.02 → less aggressive
                              # sinusitis patients have lower vocal intensity;
                              # 0.02 was discarding genuine voiced frames
 
-MIN_DURATION_S = 0.3        # skip files shorter than 300ms entirely —
+MIN_DURATION_S = 0.1        # skip files shorter than 300ms entirely —
                              # they are too short to produce any 8192-sample
                              # segment and are likely recording errors
 

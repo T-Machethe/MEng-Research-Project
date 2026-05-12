@@ -59,7 +59,7 @@ class ExperimentConfig:
     max_grad_norm:       float = 1.0
     early_stop_patience:  int   = 5
     early_stop_metric:    str   = "val_f1"   # "val_f1" (recommended) or "val_loss"
-    head_warmup_epochs:   int   = 3           # finetune: train classifier head only for N epochs first
+    head_warmup_epochs:   int   = 1           # finetune: train classifier head only for N epochs first
 
     # ── Split ──────────────────────────────────────────────────────────────
     test_size:     float = 0.20

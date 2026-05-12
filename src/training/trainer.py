@@ -284,6 +284,7 @@ class Trainer:
          
          # ── Resume from checkpoint if one exists ──────────────────────────────
         resume_path = self.output_dir / "latest_checkpoint.pt"
+        start_epoch = 1
         if resume_path.exists():
             log.info(f"\n  Resuming from {resume_path}")
             torch.serialization.add_safe_globals([
@@ -321,8 +322,8 @@ class Trainer:
         # Head warmup bookkeeping (finetune only)
         _warmup_epochs = getattr(cfg, "head_warmup_epochs", 0)
         _warmup_active = (cfg.mode == "finetune" and _warmup_epochs > 0)
- 
-        for epoch in range(1, cfg.num_epochs + 1):
+        
+        for epoch in range(start_epoch, cfg.num_epochs + 1):
  
             # ── Two-phase finetune: head-only warmup ───────────────────────
             # For the first head_warmup_epochs, freeze everything except the
