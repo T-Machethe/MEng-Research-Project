@@ -79,7 +79,7 @@ plt.rcParams.update({
     "boxplot.flierprops.markeredgecolor": TEXT,
 })
 
-OUTPUT_DIR = PROJECT_ROOT / "Plots and visuals" / "eda"
+OUTPUT_DIR = PROJECT_ROOT /"results"/ "Plots and visuals" / "eda"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 GROUP_MAP = {
