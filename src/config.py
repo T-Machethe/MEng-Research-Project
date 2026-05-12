@@ -15,8 +15,8 @@ MIN_DURATION_S = 0.3        # skip files shorter than 300ms entirely —
                              # they are too short to produce any 8192-sample
                              # segment and are likely recording errors
 
-WINDOW_SAMPLES     = 49152
-HOP_SAMPLES        = WINDOW_SAMPLES // 2
+WINDOW_SAMPLES     = 16000 # 1.0s @ 16kHz — matches natural vowel duration, which are the shortest in the files
+HOP_SAMPLES        = 8000  # 0.5s overlap
 FINETUNE_MIN_S     = 15.0
 FINETUNE_MAX_S     = 20.0
 NOISE_SNR_DB       = (10, 30)
