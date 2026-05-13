@@ -212,6 +212,7 @@ class Trainer:
             f"  Backbone={backbone_type} | mode={cfg.mode} | "
             f"{n_train/1e6:.1f}M / {n_total/1e6:.1f}M params trainable."
         )
+        return model
 
     def _build_optimizer(self) -> AdamW:
         cfg   = self.cfg
