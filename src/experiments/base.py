@@ -40,6 +40,7 @@ class ExperimentConfig:
     # ── Model ──────────────────────────────────────────────────────────────
     mode:          str  = "finetune"          # "scratch" | "finetune"
     pretrained:    str  = "facebook/wav2vec2-base-960h"
+    backbone:      str  = "wav2vec2"  # "wav2vec2" | "wavlm"
     freeze_layers: int  = 6
     freeze_encoder: bool = True
 

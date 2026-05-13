@@ -155,6 +155,7 @@ def build_config(args) -> ExperimentConfig:
         output_dir         = args.output_dir,
         mode               = args.mode,
         pretrained         = args.pretrained,
+        backbone           = args.backbone,
         freeze_layers      = args.freeze_layers,
         freeze_encoder     = True,
         batch_size         = args.batch_size,
@@ -454,6 +455,94 @@ def run_compare_modes(exp_key: str, args) -> None:
 # CLI entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+BACKBONE_LABELS = {
+    "wav2vec2": "Wav2Vec2",
+    "wavlm":    "WavLM",
+}
+
+BACKBONE_PRETRAINED = {
+    "wav2vec2": "facebook/wav2vec2-base-960h",
+    "wavlm":    "microsoft/wavlm-base",
+}
+
+
+def run_compare_backbones(exp_key: str, args) -> None:
+    """
+    Run 4 training runs for one experiment:
+        wav2vec2-scratch, wav2vec2-finetune, wavlm-scratch, wavlm-finetune
+
+    Saves results per run to separate subdirectories, then prints a
+    unified 4-column comparison table and saves a combined JSON.
+    """
+    original_out_dir = args.output_dir
+    all_results = {}   # key: "wav2vec2_scratch", "wav2vec2_finetune", etc.
+
+    for backbone in ["wav2vec2", "wavlm"]:
+        for mode in ["scratch", "finetune"]:
+            run_key = f"{backbone}_{mode}"
+            _log.info(f"\n{'█'*64}")
+            _log.info(f"  BACKBONE: {BACKBONE_LABELS[backbone]}  |  MODE: {mode.upper()}")
+            _log.info(f"{'█'*64}")
+
+            args.backbone   = backbone
+            args.mode       = mode
+            args.pretrained = BACKBONE_PRETRAINED[backbone]
+            args.output_dir = original_out_dir
+
+            cfg = build_config(args)
+
+            try:
+                res = run_single(
+                    exp_key,
+                    cfg,
+                    audio_cols=None,
+                    run_label=f"{backbone}_{mode}",
+                )
+                all_results[run_key] = res
+            except Exception as e:
+                _log.error(f"  [{run_key}] Failed: {e}", exc_info=True)
+                all_results[run_key] = {}
+
+    args.output_dir = original_out_dir   # restore
+
+    # ── 4-column comparison table ─────────────────────────────────────────
+    cols = ["wav2vec2_scratch", "wav2vec2_finetune",
+            "wavlm_scratch",    "wavlm_finetune"]
+    col_labels = ["Wav2Vec2-S", "Wav2Vec2-FT", "WavLM-S", "WavLM-FT"]
+
+    _log.info(f"\n{'═'*90}")
+    _log.info(f"  4-WAY COMPARISON — Experiment {exp_key}")
+    _log.info(f"  {'METRIC':<28}" +
+              "".join(f"  {lbl:>12}" for lbl in col_labels))
+    _log.info(f"  {'─'*86}")
+
+    metrics_to_compare = [
+        ("Val Accuracy",     "val/accuracy"),
+        ("Val F1 (macro)",   "val/f1_macro"),
+        ("Val ROC-AUC",      "val/roc_auc"),
+        ("Test Accuracy",    "test/accuracy"),
+        ("Test F1 (macro)",  "test/f1_macro"),
+        ("Test ROC-AUC",     "test/roc_auc"),
+    ]
+
+    for label, key in metrics_to_compare:
+        vals = [_get_metric(all_results.get(c, {}), key) for c in cols]
+        row  = f"  {label:<28}" + "".join(
+            f"  {v:>12.4f}" if v is not None else f"  {'N/A':>12}"
+            for v in vals
+        )
+        _log.info(row)
+
+    _log.info(f"{'═'*90}")
+
+    # ── Save combined JSON ────────────────────────────────────────────────
+    out_path = (_Path(args.output_dir) /
+                f"exp{exp_key}_backbone_comparison.json")
+    with open(out_path, "w") as f:
+        json.dump(all_results, f, indent=2, default=str)
+    _log.info(f"\n  JSON saved → {out_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run sinusitis wav2vec 2.0 experiments."
@@ -470,6 +559,11 @@ def main():
                         help="Run all audio types and compare results.")
     parser.add_argument("--compare_modes", action="store_true",
                         help="Run scratch + finetune and compare side by side.")
+    parser.add_argument("--backbone", type=str, default="wav2vec2",
+                        choices=["wav2vec2", "wavlm"],
+                        help="Backbone architecture (default: wav2vec2).")
+    parser.add_argument("--compare_backbones", action="store_true",
+                        help="Run wav2vec2 AND wavlm scratch+finetune (4 runs).")
     parser.add_argument("--pretrained",
                         default="facebook/wav2vec2-base-960h")
     parser.add_argument("--freeze_layers", type=int, default=6)
@@ -527,7 +621,9 @@ def main():
                 else [args.exp])
 
     for exp_key in exp_keys:
-        if args.compare_modes:
+        if args.compare_backbones:
+            run_compare_backbones(exp_key, args)
+        elif args.compare_modes:
             run_compare_modes(exp_key, args)
         elif args.compare_types:
             run_compare_types(exp_key, args)

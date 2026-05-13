@@ -8,6 +8,8 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import (
     Wav2Vec2Config,
     Wav2Vec2Model,
+    WavLMConfig,
+    WavLMModel,
     get_linear_schedule_with_warmup,
 )
  
@@ -129,52 +131,88 @@ class Trainer:
         return torch.device(device_str)
  
     def _build_model(self) -> Wav2Vec2Classifier:
-        cfg = self.cfg
- 
+        """
+        Build backbone + MLP head.
+
+        Supports two backbone families (cfg.backbone):
+          "wav2vec2"  ->  facebook/wav2vec2-base-960h
+          "wavlm"     ->  microsoft/wavlm-base
+
+        Both share identical API: raw waveform input [B, T],
+        hidden_size=768, same encoder.layers for layerwise LR.
+        """
+        cfg           = self.cfg
+        backbone_type = getattr(cfg, "backbone", "wav2vec2").lower().strip()
+
+        BACKBONE_DEFAULTS = {
+            "wav2vec2": "facebook/wav2vec2-base-960h",
+            "wavlm":    "microsoft/wavlm-base",
+        }
+
+        from transformers.utils import logging as hf_logging
+        hf_logging.set_verbosity_warning()
+
         if cfg.mode == "scratch":
-            config   = Wav2Vec2Config(
-                hidden_size=768,
-                num_hidden_layers=12,
-                num_attention_heads=12,
-            )
-            backbone = Wav2Vec2Model(config)
- 
+            if backbone_type == "wavlm":
+                config   = WavLMConfig(
+                    hidden_size=768,
+                    num_hidden_layers=12,
+                    num_attention_heads=12,
+                )
+                backbone = WavLMModel(config)
+            else:
+                config   = Wav2Vec2Config(
+                    hidden_size=768,
+                    num_hidden_layers=12,
+                    num_attention_heads=12,
+                )
+                backbone = Wav2Vec2Model(config)
+            log.info(f"  {backbone_type} backbone — randomly initialised (scratch).")
+
         else:
-            # Load backbone only — no lm_head, no vocabulary-size mismatch.
-            # mask_time_prob / mask_feature_prob MUST be 0.0 for fine-tuning:
-            # masked_spec_embed is randomly initialised and produces NaN
-            # outputs when masking is active, causing loss=NaN from step 0.
-            
-            log.info(f"  Loading pretrained weights: {cfg.pretrained}")
-            from transformers.utils import logging as hf_logging
-            hf_logging.set_verbosity_warning()        # keep progress bar, suppress debug noise
-            backbone = Wav2Vec2Model.from_pretrained(
-                cfg.pretrained,
-                mask_time_prob=0.0,
-                mask_feature_prob=0.0,
-            )
-            log.info("  Pretrained weights loaded.")
-            
+            # Resolve pretrained checkpoint.
+            # If user passed --backbone wavlm without overriding --pretrained,
+            # auto-select the WavLM checkpoint.
+            pretrained = cfg.pretrained
+            if pretrained == "facebook/wav2vec2-base-960h" and backbone_type == "wavlm":
+                pretrained = BACKBONE_DEFAULTS["wavlm"]
+
+            log.info(f"  Loading {backbone_type} weights: {pretrained}")
+
+            if backbone_type == "wavlm":
+                backbone = WavLMModel.from_pretrained(
+                    pretrained,
+                    mask_time_prob=0.0,
+                    mask_feature_prob=0.0,
+                )
+            else:
+                backbone = Wav2Vec2Model.from_pretrained(
+                    pretrained,
+                    mask_time_prob=0.0,
+                    mask_feature_prob=0.0,
+                )
+
+            log.info(f"  Weights loaded: {pretrained}")
+
             if cfg.freeze_encoder:
                 backbone.feature_extractor.requires_grad_(False)
                 backbone.feature_projection.requires_grad_(False)
- 
+
             for i, layer in enumerate(backbone.encoder.layers):
                 if i < cfg.freeze_layers:
                     for p in layer.parameters():
                         p.requires_grad = False
- 
+
         hidden_size = backbone.config.hidden_size
-        model       = Wav2Vec2Classifier(backbone, hidden_size,
-                                         self.num_classes)
- 
-        n_train = sum(p.numel() for p in model.parameters()
-                      if p.requires_grad)
+        model       = Wav2Vec2Classifier(backbone, hidden_size, self.num_classes)
+
+        n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
         n_total = sum(p.numel() for p in model.parameters())
-        log.info(f"  Model: {n_train/1e6:.2f}M / "
-                 f"{n_total/1e6:.2f}M trainable.")
-        return model.to(self.device)
- 
+        log.info(
+            f"  Backbone={backbone_type} | mode={cfg.mode} | "
+            f"{n_train/1e6:.1f}M / {n_total/1e6:.1f}M params trainable."
+        )
+
     def _build_optimizer(self) -> AdamW:
         cfg   = self.cfg
         lr    = cfg.learning_rate
