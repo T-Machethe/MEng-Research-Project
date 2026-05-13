@@ -115,7 +115,7 @@ class Trainer:
         self.num_classes = num_classes
         self.output_dir  = _Path(output_dir)
         self.device      = self._resolve_device(cfg.device)
-        self.model       = self._build_model()
+        self.model       = self._build_model().to(self._resolve_device(self.cfg.device))
         self.optimizer   = self._build_optimizer()
         self.scheduler   = None
         self.loss_fn     = self._build_loss(class_weights)
