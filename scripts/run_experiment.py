@@ -480,14 +480,33 @@ def run_compare_backbones(exp_key: str, args) -> None:
     for backbone in ["wav2vec2", "wavlm"]:
         for mode in ["scratch", "finetune"]:
             run_key = f"{backbone}_{mode}"
-            _log.info(f"\n{'█'*64}")
-            _log.info(f"  BACKBONE: {BACKBONE_LABELS[backbone]}  |  MODE: {mode.upper()}")
-            _log.info(f"{'█'*64}")
 
             args.backbone   = backbone
             args.mode       = mode
             args.pretrained = BACKBONE_PRETRAINED[backbone]
             args.output_dir = original_out_dir
+
+            # ── Skip already-completed runs ───────────────────────────────
+            # results_summary.json is written only after successful test
+            # evaluation, so its presence means the run is fully complete.
+            # The nested path mirrors what run_single builds:
+            #   {output_dir}/exp{N}_{backbone}_{mode}/exp{N}_{exp_name}/
+            run_label     = f"{backbone}_{mode}"
+            expected_dir  = _Path(original_out_dir) / f"exp{exp_key}_{run_label}"
+            results_files = list(expected_dir.rglob("results_summary.json"))
+            if results_files:
+                _log.info(f"  [{run_key}] Already complete — loading saved results.")
+                try:
+                    import json as _json
+                    saved = _json.load(open(results_files[0]))
+                    all_results[run_key] = saved
+                except Exception:
+                    all_results[run_key] = {}
+                continue
+
+            _log.info(f"\n{'█'*64}")
+            _log.info(f"  BACKBONE: {BACKBONE_LABELS[backbone]}  |  MODE: {mode.upper()}")
+            _log.info(f"{'█'*64}")
 
             cfg = build_config(args)
 
@@ -496,7 +515,7 @@ def run_compare_backbones(exp_key: str, args) -> None:
                     exp_key,
                     cfg,
                     audio_cols=None,
-                    run_label=f"{backbone}_{mode}",
+                    run_label=run_label,
                 )
                 all_results[run_key] = res
             except Exception as e:
