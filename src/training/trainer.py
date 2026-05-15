@@ -781,11 +781,16 @@ class Trainer:
             "train_history":    train_history or [],
         }
  
-        torch.save(ckpt, self.output_dir / filename)
- 
-        # Always overwrite latest_checkpoint.pt so resume always picks up
-        # the most recent epoch regardless of whether it was the best
-        torch.save(ckpt, self.output_dir / "latest_checkpoint.pt")
+        # Atomic save: write to a temp file then rename.
+        # If the process is interrupted mid-write the destination file
+        # stays intact and only the temp file is left corrupt.
+        def _atomic_save(ckpt, dest):
+            tmp = dest.with_suffix(".tmp")
+            torch.save(ckpt, tmp)
+            tmp.replace(dest)   # atomic on POSIX; overwrites dest only on success
+
+        _atomic_save(ckpt, self.output_dir / filename)
+        _atomic_save(ckpt, self.output_dir / "latest_checkpoint.pt")
  
         log.debug(f"  Checkpoint saved → {filename}")
  
@@ -811,6 +816,32 @@ class Trainer:
             )
             raise FileNotFoundError(f"No checkpoint at {path}")
         
+        # Verify the file is not corrupted before loading.
+        # A truncated write leaves a file that cannot be opened as a zip.
+        try:
+            import zipfile
+            with zipfile.ZipFile(str(path), "r") as _:
+                pass   # just checks the central directory
+        except (zipfile.BadZipFile, Exception) as corrupt_err:
+            log.error(
+                f"Checkpoint {path} is corrupted ({corrupt_err}). "
+                f"This usually means a Drive write was interrupted. "
+                f"Falling back to latest_checkpoint.pt if available."
+            )
+            fallback = self.output_dir / "latest_checkpoint.pt"
+            if fallback.exists() and fallback != path:
+                try:
+                    with zipfile.ZipFile(str(fallback), "r") as _:
+                        pass
+                    path = fallback
+                    log.info(f"  Using fallback checkpoint: {fallback.name}")
+                except Exception:
+                    pass
+            else:
+                raise FileNotFoundError(
+                    f"Checkpoint {filename} is corrupted and no fallback found."
+                ) from corrupt_err
+
         torch.serialization.add_safe_globals([
             np.ndarray,
             np._core.multiarray._reconstruct,
@@ -822,7 +853,8 @@ class Trainer:
             map_location=self.device,
             weights_only=False,
         )
-        self.model.load_state_dict(ckpt["model"],strict=False)
-        log.info(f"  Loaded → {filename}  "
-                f"(epoch {ckpt['epoch']}, "
-                f"val_loss {ckpt['val_loss']:.4f})")
+        self.model.load_state_dict(ckpt["model"], strict=False)
+        log.info(
+            f"  Loaded → {path.name}  "
+            f"(epoch {ckpt['epoch']}, val_loss {ckpt['val_loss']:.4f})"
+        )
