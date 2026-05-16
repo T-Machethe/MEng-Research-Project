@@ -252,12 +252,12 @@ class ExperimentReporter:
             f"  Val  Loss    : {self.results.get('val/loss', 0):.4f}",
             f"  Val  Acc     : {self.results.get('val/accuracy', 0):.4f}",
             f"  Val  F1      : {self.results.get('val/f1_macro', 0):.4f}",
-            f"  Val  AUC     : {self.results.get('val/roc_auc', 0):.4f}",
+            f"  Val  AUC     : {self.results.get('val/roc_auc', self.results.get('val/roc_auc_macro', 0)):.4f}",
             f"{'─'*28}",
             f"  Test Loss    : {self.results.get('test/loss', 0):.4f}",
             f"  Test Acc     : {self.results.get('test/accuracy', 0):.4f}",
             f"  Test F1      : {self.results.get('test/f1_macro', 0):.4f}",
-            f"  Test AUC     : {self.results.get('test/roc_auc', 0):.4f}",
+            f"  Test AUC     : {self.results.get('test/roc_auc', self.results.get('test/roc_auc_macro', 0)):.4f}",
             f"{'─'*28}",
             f"  Epochs       : {len(epochs)}",
             f"  Best Val Loss: {self.results.get('best_val_loss', 0):.4f}",
@@ -365,6 +365,10 @@ class ExperimentReporter:
         test_probs = self.results.get("test/all_probs")
         test_labels = self.results.get("test/all_labels")
 
+        # Resolve AUC from either binary or multiclass key
+        val_auc  = self.results.get("val/roc_auc") or self.results.get("val/roc_auc_macro")
+        test_auc = self.results.get("test/roc_auc") or self.results.get("test/roc_auc_macro")
+
         plotted = False
         for probs, labels, color, split, auc in [
             (val_probs,  val_labels,  ORANGE, "Val",  val_auc),
@@ -373,17 +377,37 @@ class ExperimentReporter:
             has_data = (probs is not None
                         and hasattr(probs, "__len__")
                         and len(probs) > 0)
-            if has_data and self.num_classes == 2:
-                
-                try:
-                    from sklearn.metrics import roc_curve
-                    fpr, tpr, _ = roc_curve(labels,
-                                            np.array(probs)[:, 1])
+            if not has_data:
+                continue
+            try:
+                from sklearn.metrics import roc_curve
+                probs_arr = np.array(probs)
+                labels_arr = np.array(labels)
+                if self.num_classes == 2:
+                    fpr, tpr, _ = roc_curve(labels_arr, probs_arr[:, 1])
+                    auc_label = f"{auc:.4f}" if auc is not None else "N/A"
                     ax.plot(fpr, tpr, color=color, linewidth=2,
-                            label=f"{split} ROC (AUC={auc:.4f})")
+                            label=f"{split} ROC (AUC={auc_label})")
                     plotted = True
-                except Exception:
-                    pass
+                else:
+                    # Multiclass: one curve per class (one-vs-rest)
+                    from sklearn.preprocessing import label_binarize
+                    from sklearn.metrics import roc_auc_score
+                    classes = list(range(self.num_classes))
+                    y_bin = label_binarize(labels_arr, classes=classes)
+                    colors_ovr = [ORANGE, ACCENT, GREEN] if split == "Val" else [ACCENT, ORANGE, GREEN]
+                    for i, cls_color in zip(classes, ["#E07B39", "#2E5FA3", "#3A9E6F"]):
+                        try:
+                            fpr_i, tpr_i, _ = roc_curve(y_bin[:, i], probs_arr[:, i])
+                            auc_i = roc_auc_score(y_bin[:, i], probs_arr[:, i])
+                            ax.plot(fpr_i, tpr_i, linewidth=1.5,
+                                    linestyle="--" if split == "Val" else "-",
+                                    label=f"{split} Class {i} (AUC={auc_i:.3f})")
+                            plotted = True
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         if not plotted:
             # No raw probs stored — show AUC as text annotation
