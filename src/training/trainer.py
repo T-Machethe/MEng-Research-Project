@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from pathlib import Path as _Path
 from torch.optim import AdamW
+from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from transformers import (
     Wav2Vec2Config,
@@ -119,6 +120,7 @@ class Trainer:
         self.optimizer   = self._build_optimizer()
         self.scheduler   = None
         self.loss_fn     = self._build_loss(class_weights)
+        self.scaler      = GradScaler(enabled=self.device.type == "cuda")
         self.writer      = SummaryWriter(
             log_dir=str(self.output_dir / "tensorboard")
         )
@@ -428,34 +430,40 @@ class Trainer:
                     am1 = batch["attention_mask_1"].to(self.device)
                     am2 = batch["attention_mask_2"].to(self.device)
                     # Mean of both embeddings → single logit vector
-                    logits = (
-                        self.model(input_values=iv1, attention_mask=am1) +
-                        self.model(input_values=iv2, attention_mask=am2)
-                    ) / 2.0
+                    with autocast(device_type=self.device.type,
+                                  enabled=self.device.type == "cuda"):
+                        logits = (
+                            self.model(input_values=iv1, attention_mask=am1) +
+                            self.model(input_values=iv2, attention_mask=am2)
+                        ) / 2.0
                 else:
                     input_values   = batch["input_values"].to(self.device)
                     attention_mask = batch["attention_mask"].to(self.device)
                     input_values = torch.nan_to_num(
                         input_values, nan=0.0, posinf=1.0, neginf=-1.0
                     )
-                    logits = self.model(
-                        input_values=input_values,
-                        attention_mask=attention_mask,
-                    )
+                    with autocast(device_type=self.device.type,
+                                  enabled=self.device.type == "cuda"):
+                        logits = self.model(
+                            input_values=input_values,
+                            attention_mask=attention_mask,
+                        )
  
                 loss = self.loss_fn(logits, labels)
- 
+
                 if not torch.isfinite(loss):
                     log.warning(f"  NaN/Inf loss at step {global_step} — skipping.")
                     self.optimizer.zero_grad()
                     continue
- 
+
                 self.optimizer.zero_grad()
-                loss.backward()
+                self.scaler.scale(loss).backward()
+                self.scaler.unscale_(self.optimizer)
                 nn.utils.clip_grad_norm_(
                     self.model.parameters(), cfg.max_grad_norm
                 )
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
                 self.scheduler.step()
  
                 epoch_loss  += loss.item()
