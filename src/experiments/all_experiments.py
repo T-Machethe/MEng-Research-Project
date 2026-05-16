@@ -228,7 +228,24 @@ class Exp3Trajectory(BaseExperiment):
             "Models temporal recovery trajectory from voice acoustics."
         )
 
+    def _patch_cfg_for_multiclass(self):
+        """
+        Override training settings for the 3-class task.
+
+        Class 1 (early post-op) sits acoustically between pre-op and
+        late recovery, making it the hardest class to learn. Standard
+        focal gamma=2 is insufficient — gamma=3 more aggressively
+        forces the model to attend to ambiguous intermediate samples.
+        """
+        if getattr(self.cfg, "focal_gamma", 2.0) <= 2.0:
+            self.cfg.focal_gamma = 3.0
+        # Ensure class weights are always used alongside oversampling
+        # for the 3-class task (belt-and-suspenders for the minority class)
+        if getattr(self.cfg, "imbalance_strategy", "oversample") == "oversample":
+            self.cfg.imbalance_strategy = "both"
+
     def prepare_data(self):
+        self._patch_cfg_for_multiclass()
         df = self.load_csv()
 
         fess = df[df["GROUP"] == "FESS"].copy()

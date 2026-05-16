@@ -131,7 +131,7 @@ def build_experiment_loaders(
     # Sampler for training
     train_sampler = None
     train_shuffle = True
-    if imbalance_strategy == "oversample":
+    if imbalance_strategy in ("oversample", "both"):
         train_sampler = build_weighted_sampler(train_ds)
         train_shuffle = False   # sampler and shuffle are mutually exclusive
  
