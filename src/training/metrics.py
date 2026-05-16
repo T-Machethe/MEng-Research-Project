@@ -62,18 +62,37 @@ def compute_metrics(all_labels: List[int],
         f"{split_name}/confusion_matrix": cm,
     }
  
-    # ROC-AUC (binary only — multi-class needs OvR)
+    # ROC-AUC
+    # NOTE: AMP (float16) softmax outputs do not sum exactly to 1.0 per row
+    # (max drift ~3e-4). sklearn's multiclass roc_auc_score enforces a strict
+    # sum-to-1 check and raises ValueError on AMP-generated probs. We
+    # re-normalise before any AUC computation as a second line of defence
+    # (trainer._evaluate already does this, but guard here too).
     if all_probs is not None:
         try:
+            probs_arr = np.array(all_probs, dtype=np.float64)
+            row_sums  = probs_arr.sum(axis=1, keepdims=True)
+            if np.abs(row_sums - 1.0).max() > 1e-6:
+                probs_arr = probs_arr / np.clip(row_sums, 1e-12, None)
+                log.debug(
+                    f"  [{split_name}] Renormalised probs (AMP fp16 drift "
+                    f"corrected; max row-sum deviation was "
+                    f"{np.abs(row_sums - 1.0).max():.2e})"
+                )
+
             if num_classes == 2:
-                auc = roc_auc_score(labels, all_probs[:, 1])
+                auc = roc_auc_score(labels, probs_arr[:, 1])
                 metrics[f"{split_name}/roc_auc"] = float(auc)
             else:
-                auc = roc_auc_score(labels, all_probs,
+                auc = roc_auc_score(labels, probs_arr,
                                     multi_class="ovr", average="macro")
                 metrics[f"{split_name}/roc_auc_macro"] = float(auc)
         except Exception as e:
-            log.warning(f"ROC-AUC computation failed: {e}")
+            log.warning(f"ROC-AUC computation failed ({split_name}): {e}")
+            # Store NaN so the reporter cover page doesn't silently show 0.0
+            key = (f"{split_name}/roc_auc" if num_classes == 2
+                   else f"{split_name}/roc_auc_macro")
+            metrics[key] = float("nan")
  
     # ── Console: one-line summary (always visible) ────────────────────
     _auc_val = (metrics.get(f"{split_name}/roc_auc")
