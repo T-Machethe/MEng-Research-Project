@@ -381,33 +381,52 @@ class ExperimentReporter:
                 continue
             try:
                 from sklearn.metrics import roc_curve
-                probs_arr = np.array(probs)
+                # Cast to float64 and re-normalise rows to guard against
+                # AMP float16 precision drift (rows may not sum to exactly 1.0,
+                # causing roc_auc_score multiclass to raise ValueError).
+                probs_arr  = np.array(probs, dtype=np.float64)
                 labels_arr = np.array(labels)
+                row_sums   = probs_arr.sum(axis=1, keepdims=True)
+                probs_arr  = probs_arr / np.clip(row_sums, 1e-12, None)
+
                 if self.num_classes == 2:
                     fpr, tpr, _ = roc_curve(labels_arr, probs_arr[:, 1])
-                    auc_label = f"{auc:.4f}" if auc is not None else "N/A"
+                    auc_label = (f"{auc:.4f}"
+                                 if (auc is not None and not np.isnan(auc))
+                                 else "N/A")
                     ax.plot(fpr, tpr, color=color, linewidth=2,
                             label=f"{split} ROC (AUC={auc_label})")
                     plotted = True
                 else:
-                    # Multiclass: one curve per class (one-vs-rest)
+                    # Multiclass: one curve per class (one-vs-rest OvR)
                     from sklearn.preprocessing import label_binarize
                     from sklearn.metrics import roc_auc_score
-                    classes = list(range(self.num_classes))
-                    y_bin = label_binarize(labels_arr, classes=classes)
-                    colors_ovr = [ORANGE, ACCENT, GREEN] if split == "Val" else [ACCENT, ORANGE, GREEN]
-                    for i, cls_color in zip(classes, ["#E07B39", "#2E5FA3", "#3A9E6F"]):
+                    classes   = list(range(self.num_classes))
+                    y_bin     = label_binarize(labels_arr, classes=classes)
+                    cls_colors = ["#E07B39", "#2E5FA3", "#3A9E6F"]
+                    for i, cls_color in zip(classes, cls_colors):
                         try:
-                            fpr_i, tpr_i, _ = roc_curve(y_bin[:, i], probs_arr[:, i])
-                            auc_i = roc_auc_score(y_bin[:, i], probs_arr[:, i])
+                            col = probs_arr[:, i]
+                            # Skip constant columns — roc_curve is undefined
+                            if np.unique(col).size < 2:
+                                log.debug(
+                                    f"  ROC [{split}] class {i}: skipped "
+                                    f"(constant probability column)"
+                                )
+                                continue
+                            fpr_i, tpr_i, _ = roc_curve(y_bin[:, i], col)
+                            auc_i = roc_auc_score(y_bin[:, i], col)
                             ax.plot(fpr_i, tpr_i, linewidth=1.5,
                                     linestyle="--" if split == "Val" else "-",
+                                    color=cls_color,
                                     label=f"{split} Class {i} (AUC={auc_i:.3f})")
                             plotted = True
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except Exception as exc:
+                            log.debug(
+                                f"  ROC [{split}] class {i} skipped: {exc}"
+                            )
+            except Exception as exc:
+                log.debug(f"  ROC [{split}] outer error: {exc}")
 
         if not plotted:
             # No raw probs stored — show AUC as text annotation
