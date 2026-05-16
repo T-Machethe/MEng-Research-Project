@@ -170,6 +170,7 @@ def build_config(args) -> ExperimentConfig:
         label_smoothing     = args.label_smoothing,
         layerwise_lr_decay  = args.layerwise_lr_decay,
         early_stop_metric   = args.early_stop_metric,
+        early_stop_patience = args.early_stop_patience,   # add this line
         head_warmup_epochs  = args.head_warmup_epochs,
         use_focal_loss      = args.use_focal_loss,
         focal_gamma         = args.focal_gamma,
@@ -604,6 +605,8 @@ def main():
     parser.add_argument("--early_stop_metric", type=str, default="val_f1",
                         choices=["val_f1", "val_loss"],
                         help="Metric for early stopping (default val_f1).")
+    parser.add_argument("--early_stop_patience", type=int, default=5,
+                        help="Early stopping patience in epochs (default 5).")
     parser.add_argument("--head_warmup_epochs", type=int, default=3,
                         help="Finetune: train head only for N epochs first (default 3).")
     parser.add_argument("--use_focal_loss",  action="store_true", default=True,
