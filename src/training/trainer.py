@@ -726,17 +726,22 @@ class Trainer:
                 all_audio_cols.extend(batch_cols)
  
         avg_loss = total_loss / max(len(loader), 1)
+        
+        all_probs_np = np.array(all_probs, dtype=np.float32)
+        row_sums     = all_probs_np.sum(axis=1, keepdims=True)
+        all_probs_np = all_probs_np / np.clip(row_sums, 1e-12, None)
+
         metrics  = compute_metrics(
             all_labels,
             all_preds,
-            np.array(all_probs),
+            all_probs_np,
             self.num_classes,
             split_name,
         )
         metrics[f"{split_name}/loss"] = avg_loss
-        
+
         # Store raw arrays so the reporter can draw actual ROC curves
-        metrics[f"{split_name}/all_probs"]  = np.array(all_probs)
+        metrics[f"{split_name}/all_probs"]  = all_probs_np
         metrics[f"{split_name}/all_labels"] = np.array(all_labels)
  
         # ── Per-audio-type breakdown (test split only, Option B) ───────────
