@@ -646,7 +646,7 @@ class ExperimentReporter:
             row = {"split": split}
             for metric in ["loss", "accuracy", "f1_macro", "roc_auc"]:
                 key = f"{split}/{metric}"
-                val = self.results.get(key)
+                val = self.results.get(key) or self.results.get(f"{split}/{metric}_macro")
                 if val is None and "training_history" in self.results:
                     history = self.results["training_history"]
                     if history:

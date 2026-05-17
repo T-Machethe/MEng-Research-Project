@@ -210,9 +210,15 @@ def run_single(exp_key: str, cfg: ExperimentConfig,
 
         train_df, val_df, test_df, label_fn = experiment.prepare_data()
 
-        experiment.class_weights = compute_class_weights(
-            train_df, label_fn, experiment.num_classes
-        )
+        # Exp4 uses PairedDataset; its label_fn is a placeholder (lambda row: 0)
+        # so compute_class_weights on the row-level df is meaningless.
+        is_paired = "paired" in getattr(experiment, "name", "")
+        if is_paired:
+            experiment.class_weights = None
+        else:
+            experiment.class_weights = compute_class_weights(
+                train_df, label_fn, experiment.num_classes
+            )
 
         (experiment.train_loader,
          experiment.val_loader,
@@ -223,11 +229,12 @@ def run_single(exp_key: str, cfg: ExperimentConfig,
             segment_dir=str(experiment.segment_dir),
             label_fn=label_fn,
             batch_size=cfg.batch_size,
-            imbalance_strategy=cfg.imbalance_strategy,
+            imbalance_strategy="none" if is_paired else cfg.imbalance_strategy,
             class_weights=experiment.class_weights,
             num_workers=cfg.num_workers,
             seed=cfg.seed,
             audio_cols=audio_cols,
+            paired=is_paired,
         )
 
     experiment.prepare = patched_prepare
@@ -327,23 +334,31 @@ def _get_metric(results: dict, key: str):
     """
     Extract a scalar metric from a results dict.
     For train/* keys, reads the last epoch from training_history.
+    For roc_auc keys, falls back to the _macro variant (multiclass experiments
+    store roc_auc_macro; binary experiments store roc_auc).
     """
     if not results:
         return None
 
-    # Direct key
-    if key in results:
-        val = results[key]
-        if isinstance(val, (int, float)):
-            return float(val)
+    # Try direct key, then _macro fallback for AUC
+    for lookup_key in ([key, key.replace("roc_auc", "roc_auc_macro")]
+                       if "roc_auc" in key and not key.endswith("_macro")
+                       else [key]):
+        if lookup_key in results:
+            val = results[lookup_key]
+            if isinstance(val, (int, float)):
+                return float(val)
 
     # Training history — last epoch
     if key.startswith("train/") and "training_history" in results:
         history = results["training_history"]
         if history:
             last = history[-1]
-            if key in last:
-                return float(last[key])
+            for lookup_key in ([key, key.replace("roc_auc", "roc_auc_macro")]
+                               if "roc_auc" in key and not key.endswith("_macro")
+                               else [key]):
+                if lookup_key in last:
+                    return float(last[lookup_key])
 
     return None
 
