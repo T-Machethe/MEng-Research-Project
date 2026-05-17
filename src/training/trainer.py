@@ -447,7 +447,7 @@ class Trainer:
                             attention_mask=attention_mask,
                         )
  
-                loss = self.loss_fn(logits, labels)
+                loss = self.loss_fn(logits.float(), labels)
 
                 if not torch.isfinite(loss):
                     log.warning(f"  NaN/Inf loss at step {global_step} — skipping.")
@@ -716,7 +716,7 @@ class Trainer:
                     attention_mask=attention_mask,
                 )   # [B, num_classes]
  
-            loss        = self.loss_fn(logits, labels)
+            loss        = self.loss_fn(logits.float(), labels)
             total_loss += loss.item()
  
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
