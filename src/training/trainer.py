@@ -430,8 +430,7 @@ class Trainer:
                     am1 = batch["attention_mask_1"].to(self.device)
                     am2 = batch["attention_mask_2"].to(self.device)
                     # Mean of both embeddings → single logit vector
-                    with autocast(device_type=self.device.type,
-                                  enabled=self.device.type == "cuda"):
+                    with autocast(enabled=self.device.type == "cuda"):
                         logits = (
                             self.model(input_values=iv1, attention_mask=am1) +
                             self.model(input_values=iv2, attention_mask=am2)
@@ -442,8 +441,7 @@ class Trainer:
                     input_values = torch.nan_to_num(
                         input_values, nan=0.0, posinf=1.0, neginf=-1.0
                     )
-                    with autocast(device_type=self.device.type,
-                                  enabled=self.device.type == "cuda"):
+                    with autocast(enabled=self.device.type == "cuda"):
                         logits = self.model(
                             input_values=input_values,
                             attention_mask=attention_mask,
