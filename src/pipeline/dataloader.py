@@ -112,9 +112,9 @@ def build_experiment_loaders(
     collate_fn   = collate_paired if paired else collate_standard
  
     if paired:
-        train_ds = PairedDataset(train_df, segment_dir)
-        val_ds   = PairedDataset(val_df,   segment_dir)
-        test_ds  = PairedDataset(test_df,  segment_dir)
+        train_ds = PairedDataset(train_df, segment_dir, neg_ratio=2.0)
+        val_ds   = PairedDataset(val_df,   segment_dir, neg_ratio=2.0)
+        test_ds  = PairedDataset(test_df,  segment_dir, neg_ratio=2.0)
     else:
         train_ds = SinusitisDataset(train_df, segment_dir,
                                     label_fn, audio_cols)
