@@ -635,7 +635,208 @@ class ExperimentReporter:
         plt.close(fig)
         self.generated_plots.append(path)
         log.info(f"  Saved → {path.name}")
+    
+    
+    def _plot_backbone_comparison(self, all_results: dict, exp_key: str) -> None:
+        """
+        4-way backbone comparison report (wav2vec2/wavlm × scratch/finetune).
+        all_results keys: wav2vec2_scratch, wav2vec2_finetune,
+                        wavlm_scratch,    wavlm_finetune
+        Also includes SVM results for finetune runs.
+        Produces report.pdf in self.output_dir.
+        """
+        cols       = ["wav2vec2_scratch", "wav2vec2_finetune",
+                    "wavlm_scratch",    "wavlm_finetune"]
+        col_labels = ["Wav2Vec2\nScratch", "Wav2Vec2\nFinetune",
+                    "WavLM\nScratch",   "WavLM\nFinetune"]
+        ft_cols    = ["wav2vec2_finetune", "wavlm_finetune"]
+        ft_labels  = ["Wav2Vec2 FT", "WavLM FT"]
 
+        num_classes = self.num_classes
+
+        def _g(res, key):
+            if not res:
+                return None
+            v = res.get(key) or res.get(key + "_macro")
+            return float(v) if isinstance(v, (int, float)) else None
+
+        def _fmt(v):
+            return f"{v:.4f}" if v is not None else "N/A"
+
+        pdf_path = self.output_dir / "report.pdf"
+
+        with PdfPages(str(pdf_path)) as pdf:
+
+            # ── PAGE 1: Cover ────────────────────────────────────────────────
+            fig = plt.figure(figsize=(11.7, 8.3), facecolor=BG)
+            ax  = fig.add_subplot(111)
+            ax.axis("off")
+            ax.set_facecolor(BG)
+            ax.axhline(0.93, color=ACCENT, linewidth=3, xmin=0.08, xmax=0.92)
+            ax.text(0.5, 0.89,
+                    "MEng Research Project  ·  Sinusitis Voice Analysis",
+                    transform=ax.transAxes, fontsize=9, color=MUTED, ha="center")
+            ax.text(0.5, 0.76,
+                    f"Experiment {exp_key} — Backbone Comparison",
+                    transform=ax.transAxes, fontsize=20,
+                    color=ACCENT, ha="center", fontweight="bold")
+            ax.text(0.5, 0.65,
+                    self.experiment_name.replace("_", " ").title(),
+                    transform=ax.transAxes, fontsize=14, color=TEXT, ha="center")
+
+            # Metrics summary table on cover
+            metrics_rows = []
+            row_labels_t = ["Val F1", "Val AUC", "Test F1", "Test AUC", "Epochs",
+                            "SVM Test F1", "SVM Test AUC"]
+            for col in cols:
+                res = all_results.get(col, {})
+                svm = res.get("svm", {})
+                ep  = len(res.get("training_history", []))
+                metrics_rows.append([
+                    _fmt(_g(res, "val/f1_macro")),
+                    _fmt(_g(res, "val/roc_auc")),
+                    _fmt(_g(res, "test/f1_macro")),
+                    _fmt(_g(res, "test/roc_auc")),
+                    str(ep),
+                    _fmt(svm.get("test/f1_macro")) if svm and "finetune" in col else "—",
+                    _fmt(svm.get("test/roc_auc") or svm.get("test/roc_auc_macro")) if svm and "finetune" in col else "—",
+                ])
+
+            # Transpose: rows = metrics, cols = models
+            cell_text = [[metrics_rows[c][r] for c in range(4)]
+                        for r in range(len(row_labels_t))]
+
+            tbl_ax = fig.add_axes([0.05, 0.05, 0.90, 0.50])
+            tbl_ax.axis("off")
+            tbl = tbl_ax.table(
+                cellText=cell_text,
+                rowLabels=row_labels_t,
+                colLabels=[l.replace("\n", " ") for l in col_labels],
+                cellLoc="center", loc="center"
+            )
+            tbl.auto_set_font_size(False)
+            tbl.set_fontsize(9)
+            tbl.scale(1.1, 1.6)
+            for j in range(4):
+                tbl[(0, j)].set_facecolor("#2c3e50")
+                tbl[(0, j)].set_text_props(color="white", fontweight="bold")
+            for i in range(5, len(row_labels_t)):
+                for j in range(4):
+                    tbl[(i + 1, j)].set_facecolor("#eaf4fb")
+            pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+            plt.close(fig)
+
+            # ── PAGE 2: Test F1 and AUC bar charts — all 4 models ────────────
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG)
+            fig.suptitle(f"Experiment {exp_key} — Test Performance (All Models)",
+                        fontsize=12, fontweight="bold", color=TEXT)
+
+            for ax, key, title in [
+                (axes[0], "test/f1_macro", "Test F1 (macro)"),
+                (axes[1], "test/roc_auc",  "Test AUC"),
+            ]:
+                ax.set_facecolor(PANEL)
+                vals   = [_g(all_results.get(c, {}), key) or 0 for c in cols]
+                colors = [SCRATCH_COLOR if "scratch" in c else FINETUNE_COLOR
+                        for c in cols]
+                bars   = ax.bar([l.replace("\n", " ") for l in col_labels],
+                                vals, color=colors, alpha=0.85, edgecolor=BORDER)
+                ax.set_ylim(0, 1.0)
+                ax.set_ylabel(title)
+                ax.set_title(title, color=TEXT)
+                ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4)
+                ax.grid(True, axis="y", alpha=0.3)
+                for bar in bars:
+                    ax.text(bar.get_x() + bar.get_width()/2,
+                            bar.get_height() + 0.01,
+                            f"{bar.get_height():.3f}",
+                            ha="center", va="bottom", fontsize=9, color=TEXT)
+                from matplotlib.patches import Patch
+                ax.legend(handles=[
+                    Patch(color=SCRATCH_COLOR,  label="Scratch"),
+                    Patch(color=FINETUNE_COLOR, label="Finetune"),
+                ])
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+            plt.close(fig)
+
+            # ── PAGE 3: MLP vs SVM for finetune ─────────────────────────────
+            fig, axes = plt.subplots(1, 2, figsize=(12, 6), facecolor=BG)
+            fig.suptitle(f"Experiment {exp_key} — MLP Head vs SVM Probe (Finetune)",
+                        fontsize=12, fontweight="bold", color=TEXT)
+
+            for ax, key, title in [
+                (axes[0], "test/f1_macro", "Test F1 (macro)"),
+                (axes[1], "test/roc_auc",  "Test AUC"),
+            ]:
+                ax.set_facecolor(PANEL)
+                mlp_vals, svm_vals = [], []
+                for col in ft_cols:
+                    res = all_results.get(col, {})
+                    mlp_vals.append(_g(res, key) or 0)
+                    svm = res.get("svm", {})
+                    if key == "test/roc_auc":
+                        sv = svm.get("test/roc_auc") or svm.get("test/roc_auc_macro") or 0
+                    else:
+                        sv = svm.get(key) or svm.get(key + "_macro") or 0
+                    svm_vals.append(sv)
+
+                x  = np.arange(len(ft_labels))
+                w  = 0.35
+                b1 = ax.bar(x - w/2, mlp_vals, w, label="MLP head",
+                            color=FINETUNE_COLOR, alpha=0.85, edgecolor=BORDER)
+                b2 = ax.bar(x + w/2, svm_vals,  w, label="SVM probe",
+                            color=GREEN, alpha=0.85, edgecolor=BORDER)
+                ax.set_xticks(x)
+                ax.set_xticklabels(ft_labels)
+                ax.set_ylim(0, 1.0)
+                ax.set_ylabel(title)
+                ax.set_title(title, color=TEXT)
+                ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4)
+                ax.legend()
+                ax.grid(True, axis="y", alpha=0.3)
+                for bar in list(b1) + list(b2):
+                    ax.text(bar.get_x() + bar.get_width()/2,
+                            bar.get_height() + 0.01,
+                            f"{bar.get_height():.3f}",
+                            ha="center", va="bottom", fontsize=9, color=TEXT)
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+            plt.close(fig)
+
+            # ── PAGE 4: Confusion matrices 2×2 ──────────────────────────────
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10), facecolor=BG)
+            fig.suptitle(f"Experiment {exp_key} — Test Confusion Matrices",
+                        fontsize=12, fontweight="bold", color=TEXT)
+            for ax, (col, lbl) in zip(axes.flatten(),
+                                    zip(cols, col_labels)):
+                res = all_results.get(col, {})
+                cm  = res.get("test/confusion_matrix")
+                if not cm:
+                    ax.axis("off")
+                    ax.set_title(lbl.replace("\n", " ") + "\n(no data)", color=TEXT)
+                    continue
+                cm_arr = np.array(cm)
+                im = ax.imshow(cm_arr, interpolation="nearest", cmap="Blues")
+                ax.set_title(lbl.replace("\n", " "), color=TEXT, fontsize=10)
+                ticks = np.arange(cm_arr.shape[0])
+                ax.set_xticks(ticks)
+                ax.set_yticks(ticks)
+                ax.set_xlabel("Predicted")
+                ax.set_ylabel("True")
+                thresh = cm_arr.max() / 2.0
+                for i in range(cm_arr.shape[0]):
+                    for j in range(cm_arr.shape[1]):
+                        ax.text(j, i, str(cm_arr[i, j]),
+                                ha="center", va="center", fontsize=10,
+                                color="white" if cm_arr[i, j] > thresh else "black")
+                plt.colorbar(im, ax=ax)
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+            plt.close(fig)
+
+        log.info(f"  PDF comparison report saved → {pdf_path}")
+    
     # ─────────────────────────────────────────────────────────────────────────
     # Summary CSV
     # ─────────────────────────────────────────────────────────────────────────

@@ -577,6 +577,21 @@ def run_compare_backbones(exp_key: str, args) -> None:
         json.dump(all_results, f, indent=2, default=str)
     _log.info(f"\n  JSON saved → {out_path}")
 
+    # ── Generate combined PDF comparison report ───────────────────────────
+    try:
+        from src.training.reporter import ExperimentReporter
+        num_classes = 3 if exp_key == "3" else 2
+        exp_name    = EXP_NAME_MAP.get(exp_key, f"exp{exp_key}")
+        reporter = ExperimentReporter(
+            results         = all_results,
+            output_dir      = str(args.output_dir),
+            experiment_name = exp_name,
+            mode            = "backbone_comparison",
+            num_classes     = num_classes,
+        )
+        reporter._plot_backbone_comparison(all_results, exp_key)
+    except Exception as e:
+        _log.warning(f"  Comparison report failed (non-fatal): {e}")
 
 def main():
     parser = argparse.ArgumentParser(
