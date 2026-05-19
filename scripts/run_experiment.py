@@ -474,11 +474,13 @@ def run_compare_modes(exp_key: str, args) -> None:
 BACKBONE_LABELS = {
     "wav2vec2": "Wav2Vec2",
     "wavlm":    "WavLM",
+    "xlsr":     "XLS-R",
 }
 
 BACKBONE_PRETRAINED = {
     "wav2vec2": "facebook/wav2vec2-base-960h",
     "wavlm":    "microsoft/wavlm-base",
+    "xlsr":     "facebook/wav2vec2-xls-r-300m",
 }
 
 
@@ -493,8 +495,11 @@ def run_compare_backbones(exp_key: str, args) -> None:
     original_out_dir = args.output_dir
     all_results = {}   # key: "wav2vec2_scratch", "wav2vec2_finetune", etc.
 
-    for backbone in ["wav2vec2", "wavlm"]:
+    for backbone in ["wav2vec2", "wavlm", "xlsr"]:
         for mode in ["scratch", "finetune"]:
+            # XLS-R scratch is not meaningful — multilingual pretraining is the point
+            if backbone == "xlsr" and mode == "scratch":
+                continue
             run_key = f"{backbone}_{mode}"
 
             args.backbone   = backbone
@@ -542,11 +547,12 @@ def run_compare_backbones(exp_key: str, args) -> None:
 
     # ── 4-column comparison table ─────────────────────────────────────────
     cols = ["wav2vec2_scratch", "wav2vec2_finetune",
-            "wavlm_scratch",    "wavlm_finetune"]
-    col_labels = ["Wav2Vec2-S", "Wav2Vec2-FT", "WavLM-S", "WavLM-FT"]
+            "wavlm_scratch",    "wavlm_finetune",
+            "xlsr_finetune"]
+    col_labels = ["Wav2Vec2-S", "Wav2Vec2-FT", "WavLM-S", "WavLM-FT", "XLS-R-FT"]
 
-    _log.info(f"\n{'═'*90}")
-    _log.info(f"  4-WAY COMPARISON — Experiment {exp_key}")
+    _log.info(f"\n{'═'*100}")
+    _log.info(f"  5-WAY COMPARISON — Experiment {exp_key}")
     _log.info(f"  {'METRIC':<28}" +
               "".join(f"  {lbl:>12}" for lbl in col_labels))
     _log.info(f"  {'─'*86}")
@@ -593,6 +599,22 @@ def run_compare_backbones(exp_key: str, args) -> None:
     except Exception as e:
         _log.warning(f"  Comparison report failed (non-fatal): {e}")
 
+    # ── Generate combined PDF comparison report ───────────────────────────
+    try:
+        from src.training.reporter import ExperimentReporter
+        num_classes = 3 if exp_key == "3" else 2
+        exp_name    = EXP_NAME_MAP.get(exp_key, f"exp{exp_key}")
+        reporter = ExperimentReporter(
+            results         = all_results,
+            output_dir      = str(args.output_dir),
+            experiment_name = exp_name,
+            mode            = "backbone_comparison",
+            num_classes     = num_classes,
+        )
+        reporter._plot_backbone_comparison(all_results, exp_key)
+    except Exception as e:
+        _log.warning(f"  Comparison report failed (non-fatal): {e}")
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run sinusitis wav2vec 2.0 experiments."
@@ -610,7 +632,7 @@ def main():
     parser.add_argument("--compare_modes", action="store_true",
                         help="Run scratch + finetune and compare side by side.")
     parser.add_argument("--backbone", type=str, default="wav2vec2",
-                        choices=["wav2vec2", "wavlm"],
+                        choices=["wav2vec2", "wavlm", "xlsr"],
                         help="Backbone architecture (default: wav2vec2).")
     parser.add_argument("--compare_backbones", action="store_true",
                         help="Run wav2vec2 AND wavlm scratch+finetune (4 runs).")

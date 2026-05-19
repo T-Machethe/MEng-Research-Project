@@ -149,12 +149,19 @@ class Trainer:
         BACKBONE_DEFAULTS = {
             "wav2vec2": "facebook/wav2vec2-base-960h",
             "wavlm":    "microsoft/wavlm-base",
+            "xlsr":     "facebook/wav2vec2-xls-r-300m",
         }
 
         from transformers.utils import logging as hf_logging
         hf_logging.set_verbosity_warning()
 
         if cfg.mode == "scratch":
+            if backbone_type == "xlsr":
+                raise ValueError(
+                    "XLS-R scratch mode is not supported. "
+                    "The value of XLS-R comes from multilingual pretraining. "
+                    "Use --mode finetune for XLS-R."
+                )
             if backbone_type == "wavlm":
                 config   = WavLMConfig(
                     hidden_size=768,
@@ -178,6 +185,8 @@ class Trainer:
             pretrained = cfg.pretrained
             if pretrained == "facebook/wav2vec2-base-960h" and backbone_type == "wavlm":
                 pretrained = BACKBONE_DEFAULTS["wavlm"]
+            if pretrained == "facebook/wav2vec2-base-960h" and backbone_type == "xlsr":
+                pretrained = BACKBONE_DEFAULTS["xlsr"]
 
             log.info(f"  Loading {backbone_type} weights: {pretrained}")
 
@@ -188,6 +197,7 @@ class Trainer:
                     mask_feature_prob=0.0,
                 )
             else:
+                # Both wav2vec2 and xlsr use Wav2Vec2Model
                 backbone = Wav2Vec2Model.from_pretrained(
                     pretrained,
                     mask_time_prob=0.0,
@@ -220,6 +230,12 @@ class Trainer:
         cfg   = self.cfg
         lr    = cfg.learning_rate
         decay = getattr(cfg, "layerwise_lr_decay", 1.0)
+        # XLS-R has 24 transformer layers vs 12 for wav2vec2/WavLM.
+        # 0.8^24 ≈ 0.005 — crushes bottom layers. Auto-adjust to 0.9 (0.9^24 ≈ 0.08).
+        backbone_type = getattr(cfg, "backbone", "wav2vec2").lower().strip()
+        if backbone_type == "xlsr" and decay == 0.8:
+            decay = 0.9
+            log.info("  XLS-R: layerwise LR decay adjusted to 0.9 (24 layers).")
         wd    = cfg.weight_decay
  
         if cfg.mode == "finetune" and decay < 1.0:
