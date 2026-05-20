@@ -197,7 +197,7 @@ def run_single(exp_key: str, cfg: ExperimentConfig,
     # Set output subdirectory for this run.
     # cfg is a fresh object each call so mutating it here is safe.
     if run_label and run_label != "all":
-        cfg.output_dir = str(_Path(cfg.output_dir) / f"exp{exp_key}_{run_label}")
+        cfg.output_dir = str(_Path(cfg.output_dir) / run_label)
     else:
         cfg.output_dir = str(_Path(cfg.output_dir) / f"exp{exp_key}_mixed")
 
@@ -253,7 +253,7 @@ def run_single(exp_key: str, cfg: ExperimentConfig,
         from src.training.reporter import ExperimentReporter
         reporter = ExperimentReporter(
             results         = results,
-            output_dir      = str(_Path(cfg.output_dir) / experiment.name),
+            output_dir      = str(cfg.output_dir),
             experiment_name = f"{experiment.name} [{run_label or 'mixed'}]",
             mode            = "single",
             num_classes     = experiment.num_classes,
@@ -493,11 +493,13 @@ def run_compare_backbones(exp_key: str, args) -> None:
     unified 4-column comparison table and saves a combined JSON.
     """
     original_out_dir = args.output_dir
-    all_results = {}   # key: "wav2vec2_scratch", "wav2vec2_finetune", etc.
+    # All runs for this experiment live under one folder
+    exp_dir = _Path(original_out_dir) / f"exp{exp_key}_backbone_comparison"
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    all_results = {}
 
     for backbone in ["wav2vec2", "wavlm", "xlsr"]:
         for mode in ["scratch", "finetune"]:
-            # XLS-R scratch is not meaningful — multilingual pretraining is the point
             if backbone == "xlsr" and mode == "scratch":
                 continue
             run_key = f"{backbone}_{mode}"
@@ -505,15 +507,11 @@ def run_compare_backbones(exp_key: str, args) -> None:
             args.backbone   = backbone
             args.mode       = mode
             args.pretrained = BACKBONE_PRETRAINED[backbone]
-            args.output_dir = original_out_dir
+            args.output_dir = str(exp_dir)
 
             # ── Skip already-completed runs ───────────────────────────────
-            # results_summary.json is written only after successful test
-            # evaluation, so its presence means the run is fully complete.
-            # The nested path mirrors what run_single builds:
-            #   {output_dir}/exp{N}_{backbone}_{mode}/exp{N}_{exp_name}/
             run_label     = f"{backbone}_{mode}"
-            expected_dir  = _Path(original_out_dir) / f"exp{exp_key}_{run_label}"
+            expected_dir  = exp_dir / run_label
             results_files = list(expected_dir.rglob("results_summary.json"))
             if results_files:
                 _log.info(f"  [{run_key}] Already complete — loading saved results.")
@@ -577,8 +575,7 @@ def run_compare_backbones(exp_key: str, args) -> None:
     _log.info(f"{'═'*90}")
 
     # ── Save combined JSON ────────────────────────────────────────────────
-    out_path = (_Path(args.output_dir) /
-                f"exp{exp_key}_backbone_comparison.json")
+    out_path = exp_dir / "backbone_comparison.json"
     with open(out_path, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
     _log.info(f"\n  JSON saved → {out_path}")
@@ -590,7 +587,7 @@ def run_compare_backbones(exp_key: str, args) -> None:
         exp_name    = EXP_NAME_MAP.get(exp_key, f"exp{exp_key}")
         reporter = ExperimentReporter(
             results         = all_results,
-            output_dir      = str(args.output_dir),
+            output_dir      = str(exp_dir),
             experiment_name = exp_name,
             mode            = "backbone_comparison",
             num_classes     = num_classes,
@@ -606,7 +603,7 @@ def run_compare_backbones(exp_key: str, args) -> None:
         exp_name    = EXP_NAME_MAP.get(exp_key, f"exp{exp_key}")
         reporter = ExperimentReporter(
             results         = all_results,
-            output_dir      = str(args.output_dir),
+            output_dir      = str(exp_dir),
             experiment_name = exp_name,
             mode            = "backbone_comparison",
             num_classes     = num_classes,
