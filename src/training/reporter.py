@@ -639,16 +639,21 @@ class ExperimentReporter:
     
     def _plot_backbone_comparison(self, all_results: dict, exp_key: str) -> None:
         """
-        Combined PDF for backbone comparison runs.
-        Handles 4 columns (wav2vec2/wavlm × scratch/finetune) plus optional
-        xlsr_finetune as a 5th column when present.
+        Comprehensive combined PDF for backbone comparison runs.
+        Pages (in order of thesis impact):
+        1. Cover + headline metrics table (val/test F1, AUC, epochs, SVM)
+        2. Test F1 + AUC bar charts — all models
+        3. MLP vs SVM bar charts — finetune models only
+        4. Per-class F1 comparison — test set, all models
+        5. Per-split summary tables (loss, acc, F1, AUC) — one table per model
+        6. Per-audio-type heatmap — test F1 across models and audio types
+        7. Confusion matrices grid
         """
         base_cols   = ["wav2vec2_scratch", "wav2vec2_finetune",
                     "wavlm_scratch",    "wavlm_finetune"]
         base_labels = ["Wav2Vec2\nScratch", "Wav2Vec2\nFinetune",
                     "WavLM\nScratch",   "WavLM\nFinetune"]
 
-        # Add XLS-R column only if results exist
         if all_results.get("xlsr_finetune"):
             cols       = base_cols + ["xlsr_finetune"]
             col_labels = base_labels + ["XLS-R\nFinetune"]
@@ -659,6 +664,7 @@ class ExperimentReporter:
         ft_cols   = [c for c in cols if "finetune" in c]
         ft_labels = [l.replace("\n", " ") for c, l in zip(cols, col_labels)
                     if "finetune" in c]
+        short_labels = [l.replace("\n", " ") for l in col_labels]
 
         def _g(res, key):
             if not res:
@@ -666,140 +672,178 @@ class ExperimentReporter:
             v = res.get(key) or res.get(key + "_macro")
             return float(v) if isinstance(v, (int, float)) else None
 
-        def _fmt(v):
-            return f"{v:.4f}" if v is not None else "N/A"
+        def _fmt(v, dec=4):
+            if v is None:
+                return "N/A"
+            try:
+                return f"{float(v):.{dec}f}"
+            except Exception:
+                return str(v)
+
+        def _svm(res, key):
+            svm = res.get("svm", {}) if res else {}
+            if not svm:
+                return None
+            v = svm.get(key) or svm.get(key + "_macro")
+            return float(v) if isinstance(v, (int, float)) else None
 
         pdf_path = self.output_dir / "report.pdf"
 
         with PdfPages(str(pdf_path)) as pdf:
 
-            # ── PAGE 1: Cover + metrics table ────────────────────────────────
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 1 — Cover + headline metrics table
+            # ═══════════════════════════════════════════════════════════════════
             fig = plt.figure(figsize=(14, 9), facecolor=BG)
             ax  = fig.add_subplot(111)
             ax.axis("off")
             ax.set_facecolor(BG)
-            ax.axhline(0.93, color=ACCENT, linewidth=3, xmin=0.05, xmax=0.95)
-            ax.text(0.5, 0.89,
+            ax.axhline(0.97, color=ACCENT, linewidth=3, xmin=0.04, xmax=0.96)
+            ax.text(0.5, 0.93,
                     "MEng Research Project  ·  Sinusitis Voice Analysis",
                     transform=ax.transAxes, fontsize=9, color=MUTED, ha="center")
-            ax.text(0.5, 0.76,
-                    f"Experiment {exp_key} — Backbone Comparison",
-                    transform=ax.transAxes, fontsize=18,
+            ax.text(0.5, 0.84,
+                    f"Experiment {exp_key} — Backbone Comparison Report",
+                    transform=ax.transAxes, fontsize=17,
                     color=ACCENT, ha="center", fontweight="bold")
-            ax.text(0.5, 0.67,
+            ax.text(0.5, 0.77,
                     self.experiment_name.replace("_", " ").title(),
-                    transform=ax.transAxes, fontsize=12, color=TEXT, ha="center")
+                    transform=ax.transAxes, fontsize=11, color=TEXT, ha="center")
 
-            row_labels_t = ["Val F1", "Val AUC", "Test F1", "Test AUC",
-                            "Epochs", "SVM Test F1", "SVM Test AUC"]
+            row_defs = [
+                # (label,        mlp_key,         is_svm)
+                ("Val Accuracy",  "val/accuracy",  False),
+                ("Val F1 Macro",  "val/f1_macro",  False),
+                ("Val ROC-AUC",   "val/roc_auc",   False),
+                ("Test Accuracy", "test/accuracy", False),
+                ("Test F1 Macro", "test/f1_macro", False),
+                ("Test ROC-AUC",  "test/roc_auc",  False),
+                ("Epochs",        "epochs",        False),
+                ("SVM Test F1",   "test/f1_macro", True),
+                ("SVM Test AUC",  "test/roc_auc",  True),
+            ]
             cell_text = []
-            for metric_idx, (label, key, is_svm) in enumerate([
-                ("Val F1",       "val/f1_macro",  False),
-                ("Val AUC",      "val/roc_auc",   False),
-                ("Test F1",      "test/f1_macro", False),
-                ("Test AUC",     "test/roc_auc",  False),
-                ("Epochs",       "epochs",        False),
-                ("SVM Test F1",  "test/f1_macro", True),
-                ("SVM Test AUC", "test/roc_auc",  True),
-            ]):
+            for label, key, is_svm in row_defs:
                 row = []
                 for col in cols:
                     res = all_results.get(col, {})
-                    if is_svm:
-                        if "scratch" in col:
-                            row.append("—")
-                        else:
-                            svm = res.get("svm", {})
-                            if key == "test/roc_auc":
-                                v = svm.get("test/roc_auc") or svm.get("test/roc_auc_macro")
-                            else:
-                                v = svm.get(key) or svm.get(key + "_macro")
-                            row.append(_fmt(v))
-                    elif key == "epochs":
+                    if key == "epochs":
                         row.append(str(len(res.get("training_history", []))))
+                    elif is_svm:
+                        row.append("—" if "scratch" in col else _fmt(_svm(res, key)))
                     else:
                         row.append(_fmt(_g(res, key)))
                 cell_text.append(row)
 
-            tbl_ax = fig.add_axes([0.03, 0.02, 0.94, 0.56])
+            tbl_ax = fig.add_axes([0.03, 0.02, 0.94, 0.66])
             tbl_ax.axis("off")
             tbl = tbl_ax.table(
                 cellText  = cell_text,
-                rowLabels = row_labels_t,
-                colLabels = [l.replace("\n", " ") for l in col_labels],
-                cellLoc   = "center",
-                loc       = "center",
+                rowLabels = [r[0] for r in row_defs],
+                colLabels = short_labels,
+                cellLoc   = "center", loc="center",
             )
             tbl.auto_set_font_size(False)
             tbl.set_fontsize(9)
-            tbl.scale(1.1, 1.7)
+            tbl.scale(1.05, 1.65)
+            # Header row
             for j in range(len(cols)):
                 tbl[(0, j)].set_facecolor("#2c3e50")
                 tbl[(0, j)].set_text_props(color="white", fontweight="bold")
-            # Highlight SVM rows
-            for i in range(5, 7):
+            # SVM rows highlight
+            for i in range(7, 9):
                 for j in range(len(cols)):
                     tbl[(i + 1, j)].set_facecolor("#eaf4fb")
-            # Highlight XLS-R column if present
+            # XLS-R column highlight
             if "xlsr_finetune" in cols:
-                xlsr_col_idx = cols.index("xlsr_finetune")
-                for i in range(len(row_labels_t)):
-                    tbl[(i + 1, xlsr_col_idx)].set_facecolor("#fef9e7")
+                xi = cols.index("xlsr_finetune")
+                for i in range(len(row_defs)):
+                    tbl[(i + 1, xi)].set_facecolor("#fef9e7")
 
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
 
-            # ── PAGE 2: Test F1 + AUC bar charts all models ──────────────────
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 2 — Test F1 + AUC bar charts (all models)
+            # ═══════════════════════════════════════════════════════════════════
             fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG)
             fig.suptitle(f"Experiment {exp_key} — Test Performance (All Models)",
                         fontsize=12, fontweight="bold", color=TEXT)
+
+            bar_colors = []
+            for c in cols:
+                if "xlsr" in c:
+                    bar_colors.append("#8e44ad")
+                elif "scratch" in c:
+                    bar_colors.append(SCRATCH_COLOR)
+                else:
+                    bar_colors.append(FINETUNE_COLOR)
 
             for ax, key, title in [
                 (axes[0], "test/f1_macro", "Test F1 (macro)"),
                 (axes[1], "test/roc_auc",  "Test AUC"),
             ]:
                 ax.set_facecolor(PANEL)
-                vals   = [_g(all_results.get(c, {}), key) or 0 for c in cols]
-                colors = []
-                for c in cols:
-                    if "xlsr" in c:
-                        colors.append("#8e44ad")   # purple for XLS-R
-                    elif "scratch" in c:
-                        colors.append(SCRATCH_COLOR)
-                    else:
-                        colors.append(FINETUNE_COLOR)
-
-                bar_labels = [l.replace("\n", " ") for l in col_labels]
-                bars = ax.bar(bar_labels, vals, color=colors,
+                vals = [_g(all_results.get(c, {}), key) or 0 for c in cols]
+                bars = ax.bar(short_labels, vals, color=bar_colors,
                             alpha=0.85, edgecolor=BORDER)
-                ax.set_ylim(0, 1.0)
+                ax.set_ylim(0, 1.05)
+                ax.set_ylabel(title, color=TEXT)
+                ax.set_title(title, color=TEXT)
+                ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4, label="Chance")
+                ax.tick_params(axis="x", labelrotation=15, labelsize=8)
+                ax.grid(True, axis="y", alpha=0.3)
+                for bar in bars:
+                    ax.text(bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 0.01,
+                            f"{bar.get_height():.3f}",
+                            ha="center", va="bottom", fontsize=8, color=TEXT)
+            from matplotlib.patches import Patch
+            axes[1].legend(handles=[
+                Patch(color=SCRATCH_COLOR,  label="Scratch"),
+                Patch(color=FINETUNE_COLOR, label="Finetune"),
+                Patch(color="#8e44ad",      label="XLS-R FT"),
+            ], fontsize=8)
+            plt.tight_layout()
+            pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+            plt.close(fig)
+
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 3 — Val F1 + AUC bar charts (all models)
+            # ═══════════════════════════════════════════════════════════════════
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG)
+            fig.suptitle(f"Experiment {exp_key} — Validation Performance (All Models)",
+                        fontsize=12, fontweight="bold", color=TEXT)
+            for ax, key, title in [
+                (axes[0], "val/f1_macro", "Val F1 (macro)"),
+                (axes[1], "val/roc_auc",  "Val AUC"),
+            ]:
+                ax.set_facecolor(PANEL)
+                vals = [_g(all_results.get(c, {}), key) or 0 for c in cols]
+                bars = ax.bar(short_labels, vals, color=bar_colors,
+                            alpha=0.85, edgecolor=BORDER)
+                ax.set_ylim(0, 1.05)
                 ax.set_ylabel(title, color=TEXT)
                 ax.set_title(title, color=TEXT)
                 ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4)
                 ax.tick_params(axis="x", labelrotation=15, labelsize=8)
                 ax.grid(True, axis="y", alpha=0.3)
                 for bar in bars:
-                    ax.text(bar.get_x() + bar.get_width()/2,
+                    ax.text(bar.get_x() + bar.get_width() / 2,
                             bar.get_height() + 0.01,
                             f"{bar.get_height():.3f}",
                             ha="center", va="bottom", fontsize=8, color=TEXT)
-                from matplotlib.patches import Patch
-                ax.legend(handles=[
-                    Patch(color=SCRATCH_COLOR,  label="Scratch"),
-                    Patch(color=FINETUNE_COLOR, label="Finetune"),
-                    Patch(color="#8e44ad",      label="XLS-R FT"),
-                ], fontsize=8)
-
             plt.tight_layout()
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
 
-            # ── PAGE 3: MLP vs SVM for all finetune models ───────────────────
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 4 — MLP vs SVM (finetune only)
+            # ═══════════════════════════════════════════════════════════════════
             fig, axes = plt.subplots(1, 2, figsize=(13, 6), facecolor=BG)
             fig.suptitle(
                 f"Experiment {exp_key} — MLP Head vs SVM Probe (Finetune Models)",
                 fontsize=12, fontweight="bold", color=TEXT)
-
             for ax, key, title in [
                 (axes[0], "test/f1_macro", "Test F1 (macro)"),
                 (axes[1], "test/roc_auc",  "Test AUC"),
@@ -809,13 +853,7 @@ class ExperimentReporter:
                 for col in ft_cols:
                     res = all_results.get(col, {})
                     mlp_vals.append(_g(res, key) or 0)
-                    svm = res.get("svm", {})
-                    if key == "test/roc_auc":
-                        sv = svm.get("test/roc_auc") or svm.get("test/roc_auc_macro") or 0
-                    else:
-                        sv = svm.get(key) or svm.get(key + "_macro") or 0
-                    svm_vals.append(float(sv) if sv else 0)
-
+                    svm_vals.append(_svm(res, key) or 0)
                 x  = np.arange(len(ft_labels))
                 w  = 0.35
                 b1 = ax.bar(x - w/2, mlp_vals, w, label="MLP head",
@@ -824,23 +862,288 @@ class ExperimentReporter:
                             color=GREEN, alpha=0.85, edgecolor=BORDER)
                 ax.set_xticks(x)
                 ax.set_xticklabels(ft_labels, fontsize=8)
-                ax.set_ylim(0, 1.0)
+                ax.set_ylim(0, 1.05)
                 ax.set_ylabel(title, color=TEXT)
                 ax.set_title(title, color=TEXT)
                 ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4)
                 ax.legend(fontsize=9)
                 ax.grid(True, axis="y", alpha=0.3)
                 for bar in list(b1) + list(b2):
-                    ax.text(bar.get_x() + bar.get_width()/2,
+                    ax.text(bar.get_x() + bar.get_width() / 2,
                             bar.get_height() + 0.01,
                             f"{bar.get_height():.3f}",
                             ha="center", va="bottom", fontsize=8, color=TEXT)
-
             plt.tight_layout()
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
 
-            # ── PAGE 4: Confusion matrices grid ──────────────────────────────
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 5 — Per-class F1 comparison (test set, all models)
+            # ═══════════════════════════════════════════════════════════════════
+            # Gather per-class F1 from each model's test results
+            pc_data = {}
+            n_classes = self.num_classes
+            for col in cols:
+                res = all_results.get(col, {})
+                key = "test/f1_per_class"
+                pc  = res.get(key)
+                if pc is None:
+                    hist = res.get("training_history", [])
+                    if hist:
+                        pc = hist[-1].get(key)
+                if pc is not None:
+                    pc_data[col] = pc
+
+            if pc_data:
+                fig, ax = plt.subplots(figsize=(13, 6), facecolor=BG)
+                ax.set_facecolor(PANEL)
+                fig.suptitle(
+                    f"Experiment {exp_key} — Per-Class F1 Score (Test Set)",
+                    fontsize=12, fontweight="bold", color=TEXT)
+
+                n_models  = len(pc_data)
+                n_cls     = max(len(v) for v in pc_data.values())
+                x         = np.arange(n_cls)
+                w         = 0.8 / n_models
+                cmap      = plt.cm.get_cmap("tab10", n_models)
+
+                for i, (col, f1s) in enumerate(pc_data.items()):
+                    lbl  = short_labels[cols.index(col)]
+                    clr  = cmap(i)
+                    offs = (i - n_models / 2 + 0.5) * w
+                    bars = ax.bar(x + offs, f1s, w, label=lbl,
+                                color=clr, alpha=0.85, edgecolor=BORDER)
+                    for bar in bars:
+                        ax.text(bar.get_x() + bar.get_width() / 2,
+                                bar.get_height() + 0.01,
+                                f"{bar.get_height():.2f}",
+                                ha="center", va="bottom", fontsize=7, color=TEXT)
+
+                ax.set_xticks(x)
+                ax.set_xticklabels([f"Class {i}" for i in range(n_cls)])
+                ax.set_ylim(0, 1.05)
+                ax.set_ylabel("F1 Score", color=TEXT)
+                ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4)
+                ax.grid(True, axis="y", alpha=0.3)
+                ax.legend(fontsize=8, loc="upper right")
+                plt.tight_layout()
+                pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+                plt.close(fig)
+
+            # PAGE 5b — Per-class F1 for train and val splits too
+            for split in ["train", "val"]:
+                pc_split = {}
+                for col in cols:
+                    res = all_results.get(col, {})
+                    key = f"{split}/f1_per_class"
+                    pc  = res.get(key)
+                    if pc is None:
+                        hist = res.get("training_history", [])
+                        if hist:
+                            pc = hist[-1].get(key)
+                    if pc is not None:
+                        pc_split[col] = pc
+
+                if not pc_split:
+                    continue
+
+                fig, ax = plt.subplots(figsize=(13, 5), facecolor=BG)
+                ax.set_facecolor(PANEL)
+                fig.suptitle(
+                    f"Experiment {exp_key} — Per-Class F1 Score ({split.title()} Set)",
+                    fontsize=12, fontweight="bold", color=TEXT)
+                n_m   = len(pc_split)
+                n_cls = max(len(v) for v in pc_split.values())
+                x     = np.arange(n_cls)
+                w     = 0.8 / n_m
+                cmap  = plt.cm.get_cmap("tab10", n_m)
+                for i, (col, f1s) in enumerate(pc_split.items()):
+                    lbl  = short_labels[cols.index(col)]
+                    offs = (i - n_m / 2 + 0.5) * w
+                    bars = ax.bar(x + offs, f1s, w, label=lbl,
+                                color=cmap(i), alpha=0.85, edgecolor=BORDER)
+                    for bar in bars:
+                        ax.text(bar.get_x() + bar.get_width() / 2,
+                                bar.get_height() + 0.01,
+                                f"{bar.get_height():.2f}",
+                                ha="center", va="bottom", fontsize=7, color=TEXT)
+                ax.set_xticks(x)
+                ax.set_xticklabels([f"Class {i}" for i in range(n_cls)])
+                ax.set_ylim(0, 1.05)
+                ax.set_ylabel("F1 Score", color=TEXT)
+                ax.axhline(0.5, color="grey", linestyle="--", alpha=0.4)
+                ax.grid(True, axis="y", alpha=0.3)
+                ax.legend(fontsize=8)
+                plt.tight_layout()
+                pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+                plt.close(fig)
+
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 6 — Per-split summary tables (loss, acc, F1, AUC per model)
+            # ═══════════════════════════════════════════════════════════════════
+            summary_rows = []
+            for col in cols:
+                res = all_results.get(col, {})
+                lbl = short_labels[cols.index(col)]
+                for split in ["train", "val", "test"]:
+                    loss = None
+                    hist = res.get("training_history", [])
+                    if hist:
+                        loss = hist[-1].get(f"{split}/loss")
+                    if loss is None:
+                        loss = res.get(f"{split}/loss")
+                    summary_rows.append({
+                        "Model":    lbl,
+                        "Split":    split.title(),
+                        "Loss":     _fmt(loss),
+                        "Accuracy": _fmt(_g(res, f"{split}/accuracy")),
+                        "F1 Macro": _fmt(_g(res, f"{split}/f1_macro")),
+                        "ROC-AUC":  _fmt(_g(res, f"{split}/roc_auc")),
+                    })
+
+            if summary_rows:
+                df_sum = pd.DataFrame(summary_rows)
+                n_rows = len(df_sum)
+                fig_h  = max(5, n_rows * 0.38 + 1.5)
+                fig    = plt.figure(figsize=(14, fig_h), facecolor=BG)
+                ax     = fig.add_subplot(111)
+                ax.axis("off")
+                ax.set_facecolor(BG)
+                ax.set_title(
+                    f"Experiment {exp_key} — Per-Split Summary (Loss / Accuracy / F1 / AUC)",
+                    fontsize=11, color=ACCENT, pad=12, fontfamily="monospace")
+
+                tbl = ax.table(
+                    cellText  = df_sum.values.tolist(),
+                    colLabels = list(df_sum.columns),
+                    cellLoc   = "center", loc="center",
+                )
+                tbl.auto_set_font_size(False)
+                tbl.set_fontsize(9)
+                tbl.scale(1.1, 1.6)
+
+                # Header
+                for j in range(len(df_sum.columns)):
+                    tbl[(0, j)].set_facecolor("#2c3e50")
+                    tbl[(0, j)].set_text_props(color="white", fontweight="bold")
+                # Alternate row shading by model
+                model_names = df_sum["Model"].unique()
+                model_colors = {}
+                palette = ["#f2f3f4", "#eaf4fb", "#fef9e7", "#f9ebea", "#eafaf1"]
+                for idx, m in enumerate(model_names):
+                    model_colors[m] = palette[idx % len(palette)]
+                for row_idx, row in enumerate(df_sum.itertuples()):
+                    clr = model_colors.get(row.Model, "#f2f3f4")
+                    for j in range(len(df_sum.columns)):
+                        tbl[(row_idx + 1, j)].set_facecolor(clr)
+                        tbl[(row_idx + 1, j)].set_edgecolor(BORDER)
+
+                pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+                plt.close(fig)
+
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 7 — Per-audio-type heatmap (test F1 across models × audio types)
+            # ═══════════════════════════════════════════════════════════════════
+            audio_f1 = {}   # {col: {audio_type: f1}}
+            for col in cols:
+                res      = all_results.get(col, {})
+                per_type = res.get("test/per_audio_type", {})
+                if per_type:
+                    audio_f1[col] = {
+                        at: m.get("f1_macro") for at, m in per_type.items()
+                    }
+
+            if audio_f1:
+                all_types = sorted({at for d in audio_f1.values() for at in d})
+                heat_data = np.full((len(cols), len(all_types)), np.nan)
+                for ci, col in enumerate(cols):
+                    for ti, at in enumerate(all_types):
+                        v = audio_f1.get(col, {}).get(at)
+                        if v is not None:
+                            try:
+                                heat_data[ci, ti] = float(v)
+                            except Exception:
+                                pass
+
+                fig, ax = plt.subplots(
+                    figsize=(max(12, len(all_types) * 0.9),
+                            max(5, len(cols) * 0.8 + 1.5)),
+                    facecolor=BG)
+                ax.set_facecolor(PANEL)
+                fig.suptitle(
+                    f"Experiment {exp_key} — Per-Audio-Type Test F1 (Heatmap)",
+                    fontsize=12, fontweight="bold", color=TEXT)
+
+                im = ax.imshow(heat_data, aspect="auto", cmap="RdYlGn",
+                            vmin=0, vmax=1, interpolation="nearest")
+                ax.set_xticks(np.arange(len(all_types)))
+                ax.set_xticklabels(all_types, rotation=45, ha="right", fontsize=9)
+                ax.set_yticks(np.arange(len(cols)))
+                ax.set_yticklabels(short_labels, fontsize=9)
+                ax.set_xlabel("Audio Type", color=TEXT)
+                ax.set_ylabel("Model", color=TEXT)
+
+                for ci in range(len(cols)):
+                    for ti in range(len(all_types)):
+                        v = heat_data[ci, ti]
+                        if not np.isnan(v):
+                            ax.text(ti, ci, f"{v:.2f}", ha="center", va="center",
+                                    fontsize=8,
+                                    color="black" if 0.3 < v < 0.8 else "white")
+
+                plt.colorbar(im, ax=ax, label="F1 Score")
+                plt.tight_layout()
+                pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+                plt.close(fig)
+
+                # Also a detailed per-audio-type table for each model
+                for col in cols:
+                    per_type = all_results.get(col, {}).get("test/per_audio_type", {})
+                    if not per_type:
+                        continue
+                    rows_pt = []
+                    for at, m in per_type.items():
+                        rows_pt.append({
+                            "Audio Type":  at,
+                            "N Segments":  m.get("n_segments", ""),
+                            "Accuracy":    _fmt(m.get("accuracy")),
+                            "F1 Macro":    _fmt(m.get("f1_macro")),
+                            "ROC-AUC":     _fmt(m.get("roc_auc")),
+                            "Note":        m.get("note", ""),
+                        })
+                    df_pt  = pd.DataFrame(rows_pt)
+                    lbl    = short_labels[cols.index(col)]
+                    fig_h  = max(4, len(df_pt) * 0.45 + 2)
+                    fig    = plt.figure(figsize=(13, fig_h), facecolor=BG)
+                    ax     = fig.add_subplot(111)
+                    ax.axis("off")
+                    ax.set_facecolor(BG)
+                    ax.set_title(
+                        f"Experiment {exp_key} — Per-Audio-Type Results [{lbl}]",
+                        fontsize=10, color=ACCENT, pad=10,
+                        fontfamily="monospace")
+                    tbl = ax.table(
+                        cellText  = df_pt.values.tolist(),
+                        colLabels = list(df_pt.columns),
+                        cellLoc   = "center", loc="center",
+                    )
+                    tbl.auto_set_font_size(False)
+                    tbl.set_fontsize(9)
+                    tbl.scale(1.1, 1.7)
+                    for j in range(len(df_pt.columns)):
+                        tbl[(0, j)].set_facecolor("#2c3e50")
+                        tbl[(0, j)].set_text_props(color="white", fontweight="bold")
+                    for ri in range(1, len(df_pt) + 1):
+                        clr = PANEL if ri % 2 == 0 else "#f2f3f4"
+                        for j in range(len(df_pt.columns)):
+                            tbl[(ri, j)].set_facecolor(clr)
+                            tbl[(ri, j)].set_edgecolor(BORDER)
+                    pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
+                    plt.close(fig)
+
+            # ═══════════════════════════════════════════════════════════════════
+            # PAGE 8 — Confusion matrices grid
+            # ═══════════════════════════════════════════════════════════════════
             n_models = len(cols)
             ncols_cm = 3 if n_models > 4 else 2
             nrows_cm = (n_models + ncols_cm - 1) // ncols_cm
@@ -851,17 +1154,17 @@ class ExperimentReporter:
             fig.suptitle(f"Experiment {exp_key} — Test Confusion Matrices",
                         fontsize=12, fontweight="bold", color=TEXT)
 
-            for ax, col, lbl in zip(axes, cols, col_labels):
+            for ax, col, lbl in zip(axes, cols, short_labels):
                 res = all_results.get(col, {})
                 cm  = res.get("test/confusion_matrix")
                 if not cm:
                     ax.axis("off")
-                    ax.set_title(lbl.replace("\n", " ") + "\n(no data)", color=TEXT)
+                    ax.set_title(lbl + "\n(no data)", color=TEXT)
                     continue
                 cm_arr = np.array(cm)
-                im = ax.imshow(cm_arr, interpolation="nearest", cmap="Blues")
-                ax.set_title(lbl.replace("\n", " "), color=TEXT, fontsize=10)
-                ticks = np.arange(cm_arr.shape[0])
+                im     = ax.imshow(cm_arr, interpolation="nearest", cmap="Blues")
+                ax.set_title(lbl, color=TEXT, fontsize=10)
+                ticks  = np.arange(cm_arr.shape[0])
                 ax.set_xticks(ticks)
                 ax.set_yticks(ticks)
                 ax.set_xlabel("Predicted", color=TEXT)
@@ -874,10 +1177,8 @@ class ExperimentReporter:
                                 color="white" if cm_arr[i, j] > thresh else "black")
                 plt.colorbar(im, ax=ax)
 
-            # Hide any unused axes
             for ax in axes[n_models:]:
                 ax.axis("off")
-
             plt.tight_layout()
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
