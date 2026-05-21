@@ -1,6 +1,6 @@
 # Sinusitis voice analysis — Transfer learning pipeline
 
-> MEng Research assignment - Improving sinusitis diagnosis from voice recordings using transfer learnings
+> MEng Research assignment - Improving sinusitis diagnosis from voice recordings using transfer learning.
 
  
 ## Overview
@@ -581,29 +581,34 @@ python scripts/run_experiment.py --exp 1 --compare_backbones \
 
 If you use this repository in academic work, please cite:
 
-Machethe, T.D (2026).
-Improving sinusitis diagnosis from voice recordings using transfer learnings
-Master’s Thesis, Stellenbosch University.
+> Machethe, T. D. (2026).  
+> *Improving sinusitis diagnosis from voice recordings using transfer learning.*  
+> Master’s research assignment, Stellenbosch University.
 
 ---
+
 ## Author
 
-Tumelo Machethe\
-Master’s Student\
+**Tumelo Machethe**  
+Master’s Student, Industrial Engineering  
 Stellenbosch University
 
 ---
+
 ## License
 
-This project is intended for academic and research purposes.\
-Please contact the author before using this work for commercial applications.
+This repository is provided for academic and research purposes only.
+
+For commercial use, redistribution, or derivative applications, please contact the author.
 
 ---
 
 <div align="center">
 
-#### Research Assignment
+### Research Assignment
 
-Research assignment presented in partial fulfilment of the requirements for the degree of Master of Engineering (Structured) (Industrial Engineering) in the Faculty of Engineering at Stellenbosch University.
+Presented in partial fulfilment of the requirements for the degree of  
+Master of Engineering (Structured) (Industrial Engineering)  
+in the Faculty of Engineering at Stellenbosch University.
 
 </div>
