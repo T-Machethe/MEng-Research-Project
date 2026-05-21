@@ -46,23 +46,28 @@ log = logging.getLogger(__name__)
 
 # ── Academic design tokens ─────────────────────────────────────────────────────
 BG       = "#FFFFFF"      # white page
-PANEL    = "#F4F6F9"      # subtle panel fill
-BORDER   = "#CED4DA"      # axis rules
-TEXT     = "#212529"      # near-black body
-MUTED    = "#6C757D"      # captions / secondary
-ACCENT   = "#1A5276"      # deep navy — primary
-GREEN    = "#1E8449"      # positive / train
+PANEL    = "#F7F9FC"      # very light cool grey panel
+BORDER   = "#BDC3C7"      # soft grey axes
+TEXT     = "#1C2833"      # near-black body
+MUTED    = "#5D6D7E"      # secondary text
+ACCENT   = "#1A237E"      # deep indigo — primary
+GREEN    = "#00695C"      # deep teal
 RED      = "#C0392B"      # negative / error
 ORANGE   = "#D35400"      # warning / val
 PURPLE   = "#6C3483"      # tertiary
 
-SCRATCH_COLOR  = "#1A5276"   # navy
-FINETUNE_COLOR = "#C0392B"   # dark red
+SCRATCH_COLOR  = "#1565C0"   # strong royal blue   — scratch models
+FINETUNE_COLOR = "#E65100"   # deep burnt orange   — finetune models
+XLSR_COLOR     = "#6A1B9A"   # deep purple         — XLS-R
+SVM_COLOR      = "#00695C"   # deep teal           — SVM probe
 
 plt.rcParams.update({
     "figure.facecolor":  BG,
     "axes.facecolor":    PANEL,
     "axes.edgecolor":    BORDER,
+    "axes.linewidth":    0.8,
+    "axes.spines.top":   False,
+    "axes.spines.right": False,
     "axes.labelcolor":   TEXT,
     "axes.titlecolor":   TEXT,
     "axes.titlesize":    11,
@@ -773,7 +778,7 @@ class ExperimentReporter:
             bar_colors = []
             for c in cols:
                 if "xlsr" in c:
-                    bar_colors.append("#8e44ad")
+                    bar_colors.append(XLSR_COLOR)
                 elif "scratch" in c:
                     bar_colors.append(SCRATCH_COLOR)
                 else:
@@ -801,9 +806,9 @@ class ExperimentReporter:
             from matplotlib.patches import Patch
             axes[1].legend(handles=[
                 Patch(color=SCRATCH_COLOR,  label="Scratch"),
-                Patch(color=FINETUNE_COLOR, label="Finetune"),
-                Patch(color="#8e44ad",      label="XLS-R FT"),
-            ], fontsize=8)
+                Patch(color=FINETUNE_COLOR, label="Finetune (MLP)"),
+                Patch(color=XLSR_COLOR,     label="XLS-R FT"),
+            ], fontsize=8, framealpha=0.9, edgecolor=BORDER)
             plt.tight_layout()
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
@@ -857,9 +862,11 @@ class ExperimentReporter:
                 x  = np.arange(len(ft_labels))
                 w  = 0.35
                 b1 = ax.bar(x - w/2, mlp_vals, w, label="MLP head",
-                            color=FINETUNE_COLOR, alpha=0.85, edgecolor=BORDER)
+                        color=FINETUNE_COLOR, alpha=0.9, edgecolor="white",
+                        linewidth=0.8)
                 b2 = ax.bar(x + w/2, svm_vals,  w, label="SVM probe",
-                            color=GREEN, alpha=0.85, edgecolor=BORDER)
+                            color=SVM_COLOR, alpha=0.9, edgecolor="white",
+                            linewidth=0.8)
                 ax.set_xticks(x)
                 ax.set_xticklabels(ft_labels, fontsize=8)
                 ax.set_ylim(0, 1.05)
