@@ -1,13 +1,13 @@
-# Sinusitis Voice Analysis — Transfer Learning Pipeline
+# Sinusitis voice analysis — Transfer learning pipeline
 
-> MEng Research Project · Improving sinusitis diagnosis from voice recordings using transfer learnings
-> Tumelo Machethe 
+> MEng Research assignment - Improving sinusitis diagnosis from voice recordings using transfer learnings
+
  
 ## Overview
 
 This project implements a full end-to-end deep learning pipeline to detect Chronic Rhinosinusitis (CRS) from voice recordings using acoustic biomarkers. It forms part of a longitudinal clinical intervention study involving Functional Endoscopic Sinus Surgery (FESS) patients recorded across multiple sessions pre- and post-surgery, alongside matched control and comparison surgical groups.
 
-The central thesis question is:
+The central assignment question is:
 
 > **Can transfer learning from English self-supervised speech models improve sinusitis detection from Spanish clinical voice recordings?**
 
@@ -48,7 +48,7 @@ Three backbone architectures are compared across two learning paradigms (scratch
 
 CRS alters the vocal tract through mucosal inflammation and blocked nasal passages, producing measurable acoustic signatures in vowel quality, resonance, and airflow. If FESS resolves these changes, a model trained to detect CRS should also track post-surgical acoustic recovery — providing a non-invasive, objective complement to subjective symptom scores such as SNOT-22.
 
-The domain mismatch between English-pretrained SSL models and Spanish clinical audio is a deliberate design choice and central thesis finding: scratch training on in-domain data consistently outperforms monolingual finetune models, while the multilingual XLS-R backbone substantially closes this gap.
+The domain mismatch between English-pretrained SSL models and Spanish clinical audio is a deliberate design choice and central finding: scratch training on in-domain data consistently outperforms monolingual finetune models, while the multilingual XLS-R backbone substantially closes this gap.
 
 ---
 
@@ -491,7 +491,7 @@ Predictions are grouped by audio column (vowel, sustained, speech, TDU word) to 
 
 ### SVM vs MLP Comparison
 
-For finetune runs, both the neural MLP head result and the SVM linear probe result are reported side by side. The SVM result is the headline finetune number in the thesis (reported as "finetune backbone + linear probe"). The MLP result is reported as the end-to-end finetune result.
+For finetune runs, both the neural MLP head result and the SVM linear probe result are reported side by side. The SVM result is the headline finetune number in the assignment (reported as "finetune backbone + linear probe"). The MLP result is reported as the end-to-end finetune result.
 
 ---
 
@@ -513,7 +513,7 @@ For finetune runs, both the neural MLP head result and the SVM linear probe resu
 | wav2vec2 scratch | 0.5157 | 0.5247 | — | — |
 | WavLM scratch | 0.5200 | 0.5413 | — | — |
 
-**Central finding:** Scratch training outperforms monolingual finetune across all experiments and both base backbones. XLS-R's multilingual pretraining substantially closes the domain gap — achieving AUC 0.7909 on Exp1 vs 0.6654 for wav2vec2 finetune — supporting the thesis argument that language coverage in pretraining matters for cross-lingual clinical audio transfer.
+**Central finding:** Scratch training outperforms monolingual finetune across all experiments and both base backbones. XLS-R's multilingual pretraining substantially closes the domain gap — achieving AUC 0.7909 on Exp1 vs 0.6654 for wav2vec2 finetune — supporting the argument that language coverage in pretraining matters for cross-lingual clinical audio transfer.
 
 ---
 
@@ -577,6 +577,10 @@ python scripts/run_experiment.py --exp 1 --compare_backbones \
 
 ---
 
-*MEng Research Assignment — Research assignment presented in partial fulfilment for the requirements for the
-degree of Master of Engineering (Structured) (Industrial Engineering) in the
-Faculty of Engineering at Stellenbosch University*
+<div align="center">
+
+#### Research Assignment
+
+Research assignment presented in partial fulfilment of the requirements for the degree of Master of Engineering (Structured) (Industrial Engineering) in the Faculty of Engineering at Stellenbosch University.
+
+</div>
