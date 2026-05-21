@@ -120,7 +120,10 @@ class Trainer:
         self.optimizer   = self._build_optimizer()
         self.scheduler   = None
         self.loss_fn     = self._build_loss(class_weights)
-        self.scaler      = GradScaler(enabled=self.device.type == "cuda")
+        self.scaler      = GradScaler(enabled=self.device.type == "cuda",
+                                init_scale=2**14,    # 16384 instead of 65536 — safer for large models
+                                growth_interval=200, # grow more cautiously
+                            )
         self.writer      = SummaryWriter(
             log_dir=str(self.output_dir / "tensorboard")
         )
@@ -431,7 +434,8 @@ class Trainer:
  
             # Collect predictions during training for metric computation
             train_labels, train_preds, train_probs = [], [], []
- 
+            
+            nan_steps = 0
             for batch in train_loader:
                 labels = batch["labels"].to(self.device)
  
@@ -466,9 +470,24 @@ class Trainer:
                 loss = self.loss_fn(logits.float(), labels)
 
                 if not torch.isfinite(loss):
-                    log.warning(f"  NaN/Inf loss at step {global_step} — skipping.")
+                    nan_steps += 1
+                    if nan_steps % 50 == 1:   # log once per 50, not every step
+                        log.warning(
+                            f"  NaN/Inf loss at step {global_step} "
+                            f"({nan_steps} consecutive NaN steps) — skipping."
+                        )
                     self.optimizer.zero_grad()
+                    # Reset scaler — AMP scale may be too high for XLS-R
+                    self.scaler.update()
+                    if nan_steps > 200:
+                        log.error(
+                            f"  Too many NaN steps ({nan_steps}) — "
+                            f"aborting epoch early. Check for bad segments "
+                            f"near step {global_step}."
+                        )
+                        break
                     continue
+                nan_steps = 0   # reset on valid step
 
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -502,12 +521,22 @@ class Trainer:
             avg_train_loss = epoch_loss / max(len(train_loader), 1)
  
             # ── Compute training metrics for this epoch ────────────────────────
-            train_metrics = compute_metrics(
-                train_labels, train_preds,
-                np.array(train_probs),
-                self.num_classes,
-                split_name="train",
-            )
+            if not train_labels:
+                log.warning("  No valid training steps this epoch — skipping metrics.")
+                train_metrics = {
+                    "train/loss": avg_train_loss,
+                    "train/accuracy": 0.0,
+                    "train/f1_macro": 0.0,
+                    "train/roc_auc": float("nan"),
+                }
+            else:
+                train_metrics = compute_metrics(
+                    train_labels, train_preds,
+                    np.array(train_probs),
+                    self.num_classes,
+                    split_name="train",
+                )
+            train_metrics["train/loss"] = avg_train_loss
             train_metrics["train/loss"] = avg_train_loss
  
             # Log training metrics to TensorBoard
