@@ -577,6 +577,29 @@ python scripts/run_experiment.py --exp 1 --compare_backbones \
 
 ---
 
+## Citation
+
+If you use this repository in academic work, please cite:
+
+Machethe, T.D (2026).
+Improving sinusitis diagnosis from voice recordings using transfer learnings
+Master’s Thesis, Stellenbosch University.
+
+---
+## Author
+
+Tumelo Machethe\
+Master’s Student\
+Stellenbosch University
+
+---
+## License
+
+This project is intended for academic and research purposes.\
+Please contact the author before using this work for commercial applications.
+
+---
+
 <div align="center">
 
 #### Research Assignment
