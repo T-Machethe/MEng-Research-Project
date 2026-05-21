@@ -98,7 +98,7 @@ class BaseExperiment(ABC):
         self.project_root = Path(cfg.project_root)
         self.segment_dir  = Path(cfg.segment_dir)
         self.csv_path     = Path(cfg.csv_path)
-        self.output_dir   = Path(cfg.output_dir) / self.name
+        self.output_dir   = Path(cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Populated by prepare()
