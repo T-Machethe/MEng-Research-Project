@@ -120,10 +120,13 @@ class Trainer:
         self.optimizer   = self._build_optimizer()
         self.scheduler   = None
         self.loss_fn     = self._build_loss(class_weights)
-        self.scaler      = GradScaler(enabled=self.device.type == "cuda",
-                                init_scale=2**14,    # 16384 instead of 65536 — safer for large models
-                                growth_interval=200, # grow more cautiously
-                            )
+        backbone_type = getattr(cfg, "backbone", "wav2vec2").lower().strip()
+        init_scale    = 2 ** 14 if backbone_type == "xlsr" else 2 ** 16
+        self.scaler   = GradScaler(
+                                    enabled       = self.device.type == "cuda",
+                                    init_scale    = init_scale,
+                                    growth_interval = 200,
+                                )
         self.writer      = SummaryWriter(
             log_dir=str(self.output_dir / "tensorboard")
         )
@@ -466,28 +469,26 @@ class Trainer:
                             input_values=input_values,
                             attention_mask=attention_mask,
                         )
- 
+
                 loss = self.loss_fn(logits.float(), labels)
 
                 if not torch.isfinite(loss):
                     nan_steps += 1
-                    if nan_steps % 50 == 1:   # log once per 50, not every step
+                    if nan_steps == 1 or nan_steps % 50 == 0:
                         log.warning(
                             f"  NaN/Inf loss at step {global_step} "
                             f"({nan_steps} consecutive NaN steps) — skipping."
                         )
                     self.optimizer.zero_grad()
-                    # Reset scaler — AMP scale may be too high for XLS-R
-                    self.scaler.update()
                     if nan_steps > 200:
                         log.error(
-                            f"  Too many NaN steps ({nan_steps}) — "
-                            f"aborting epoch early. Check for bad segments "
-                            f"near step {global_step}."
+                            f"  Too many consecutive NaN steps ({nan_steps}) — "
+                            f"aborting epoch. Reduce learning rate or increase "
+                            f"GradScaler init_scale."
                         )
                         break
                     continue
-                nan_steps = 0   # reset on valid step
+                nan_steps = 0
 
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
