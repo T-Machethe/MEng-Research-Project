@@ -489,10 +489,62 @@ class Trainer:
 
                 loss = self.loss_fn(logits.float(), labels)
 
-                # Guard: if logits contain NaN/Inf the loss will be NaN.
-                # Catching here avoids touching the backward pass at all.
+                # ── NaN/Inf guard with float32 fallback ──────────────────────
+                # For fp16 models (wav2vec2, WavLM): retry the corrupted batch
+                # in float32 before counting as a failure.  This handles
+                # occasional segment spikes without wasting the gradient step.
+                # For fp32 models (XLS-R, paired): no retry available — skip.
                 if not torch.isfinite(logits).all() or not torch.isfinite(loss):
-                    nan_steps += 1
+                    if self.amp_enabled:
+                        # ── Retry in float32 ─────────────────────────────────
+                        self.optimizer.zero_grad()
+                        with autocast(enabled=False):
+                            if "input_values_1" in batch:
+                                logits_fp32 = (
+                                    self.model(input_values=iv1.float(),
+                                               attention_mask=am1) +
+                                    self.model(input_values=iv2.float(),
+                                               attention_mask=am2)
+                                ) / 2.0
+                            else:
+                                logits_fp32 = self.model(
+                                    input_values=input_values.float(),
+                                    attention_mask=attention_mask,
+                                )
+                        loss_fp32 = self.loss_fn(logits_fp32.float(), labels)
+                        if torch.isfinite(loss_fp32):
+                            log.debug(
+                                f"  fp16 spike at step {global_step} — "
+                                f"recovered via fp32 fallback."
+                            )
+                            # Use the fp32 loss for this step — fall through
+                            # to the normal backward block with scaler disabled
+                            # for this one step.
+                            loss   = loss_fp32
+                            logits = logits_fp32
+                            nan_steps = 0
+                            # Backward without scaler for this step
+                            loss.backward()
+                            nn.utils.clip_grad_norm_(
+                                self.model.parameters(), cfg.max_grad_norm
+                            )
+                            self.optimizer.step()
+                            self.optimizer.zero_grad()
+                            self.scheduler.step()
+                            global_step   += 1
+                            epoch_loss    += loss.item()
+                            preds = logits.argmax(dim=-1).cpu().tolist()
+                            train_preds.extend(preds)
+                            train_labels.extend(labels.cpu().tolist())
+                            probs = torch.softmax(logits, dim=-1)
+                            train_probs.extend(probs.cpu().tolist())
+                            continue
+                        else:
+                            # fp32 also failed — treat as genuine NaN
+                            nan_steps += 1
+                    else:
+                        nan_steps += 1
+
                     if nan_steps == 1 or nan_steps % 50 == 0:
                         log.warning(
                             f"  NaN/Inf loss at step {global_step} "
