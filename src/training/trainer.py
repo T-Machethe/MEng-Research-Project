@@ -126,12 +126,21 @@ class Trainer:
         self.scheduler   = None
         self.loss_fn     = self._build_loss(class_weights)
         backbone_type = getattr(cfg, "backbone", "wav2vec2").lower().strip()
-        init_scale    = 2 ** 14 if backbone_type == "xlsr" else 2 ** 16
-        self.scaler   = GradScaler(
-                                    enabled       = self.device.type == "cuda",
-                                    init_scale    = init_scale,
-                                    growth_interval = 200,
-                                )
+        # XLS-R (24 layers) overflows fp16 regardless of init_scale.
+        # Disable AMP entirely for XLS-R — training is slower but stable.
+        # Base models (12 layers) use AMP normally.
+        self.amp_enabled = (self.device.type == "cuda") and (backbone_type != "xlsr")
+        init_scale       = 2 ** 16
+        self.scaler      = GradScaler(
+                               enabled        = self.amp_enabled,
+                               init_scale     = init_scale,
+                               growth_interval= 200,
+                           )
+        if not self.amp_enabled and self.device.type == "cuda":
+            log.info(
+                "  AMP disabled for XLS-R — running full float32 forward "
+                "pass to prevent fp16 overflow in 24-layer backbone."
+            )
         self.writer      = SummaryWriter(
             log_dir=str(self.output_dir / "tensorboard")
         )
@@ -461,7 +470,7 @@ class Trainer:
                     am1 = batch["attention_mask_1"].to(self.device)
                     am2 = batch["attention_mask_2"].to(self.device)
                     # Mean of both embeddings → single logit vector
-                    with autocast(enabled=self.device.type == "cuda"):
+                    with autocast(enabled=self.amp_enabled):
                         logits = (
                             self.model(input_values=iv1, attention_mask=am1) +
                             self.model(input_values=iv2, attention_mask=am2)
@@ -472,7 +481,7 @@ class Trainer:
                     input_values = torch.nan_to_num(
                         input_values, nan=0.0, posinf=1.0, neginf=-1.0
                     )
-                    with autocast(enabled=self.device.type == "cuda"):
+                    with autocast(enabled=self.amp_enabled):
                         logits = self.model(
                             input_values=input_values,
                             attention_mask=attention_mask,
