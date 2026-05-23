@@ -434,10 +434,13 @@ class Trainer:
             self.model.train()
             epoch_loss  = 0.0
             t0          = time.time()
- 
+
             # Collect predictions during training for metric computation
             train_labels, train_preds, train_probs = [], [], []
-            
+
+            # Snapshot clean weights before epoch — restore on NaN flood
+            _epoch_state = {k: v.clone() for k, v in self.model.state_dict().items()}
+
             nan_steps = 0
             for batch in train_loader:
                 labels = batch["labels"].to(self.device)
@@ -480,12 +483,21 @@ class Trainer:
                             f"({nan_steps} consecutive NaN steps) — skipping."
                         )
                     self.optimizer.zero_grad()
-                    if nan_steps > 200:
+                    if nan_steps > 50:
                         log.error(
-                            f"  Too many consecutive NaN steps ({nan_steps}) — "
-                            f"aborting epoch. Reduce learning rate or increase "
-                            f"GradScaler init_scale."
+                            f"  NaN flood ({nan_steps} steps) — model weights "
+                            f"corrupted by fp16 overflow. Restoring epoch "
+                            f"snapshot and halving GradScaler scale."
                         )
+                        self.model.load_state_dict(_epoch_state)
+                        if self.scaler.is_enabled():
+                            new_scale = max(self.scaler.get_scale() / 2.0, 1.0)
+                            self.scaler._scale = torch.tensor(
+                                new_scale,
+                                device=self.device,
+                                dtype=torch.float32,
+                            )
+                            log.info(f"  GradScaler scale reduced to {new_scale}")
                         break
                     continue
                 nan_steps = 0
