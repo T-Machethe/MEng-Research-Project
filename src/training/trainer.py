@@ -96,8 +96,13 @@ class Wav2Vec2Classifier(nn.Module):
             input_values=input_values,
             attention_mask=attention_mask,
         )
-        # Mean-pool over time frames [B, T', H] → [B, H]
-        hidden = outputs.last_hidden_state.mean(dim=1)
+        # Cast to float32 before pooling and head to prevent fp16 overflow
+        # in deep models (XLS-R 24 layers).  The backbone runs in fp16 under
+        # autocast; hidden states can reach values that overflow fp16 (~65504)
+        # before reaching the head.  Casting here is safe because the head
+        # parameters are also upcast by autocast when inputs are float32.
+        hidden = outputs.last_hidden_state.float().mean(dim=1)
+        hidden = torch.clamp(hidden, min=-1e4, max=1e4)  # safety clamp
         return self.head(hidden)   # [B, num_classes]
  
  
@@ -475,7 +480,9 @@ class Trainer:
 
                 loss = self.loss_fn(logits.float(), labels)
 
-                if not torch.isfinite(loss):
+                # Guard: if logits contain NaN/Inf the loss will be NaN.
+                # Catching here avoids touching the backward pass at all.
+                if not torch.isfinite(logits).all() or not torch.isfinite(loss):
                     nan_steps += 1
                     if nan_steps == 1 or nan_steps % 50 == 0:
                         log.warning(
