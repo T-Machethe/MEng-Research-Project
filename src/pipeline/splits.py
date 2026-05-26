@@ -196,3 +196,208 @@ def _log_split_summary(train_df, val_df, test_df, stratify_col):
         groups     = split[stratify_col].value_counts().to_dict()
         log.info(f"    {name:<6}: {n_patients} patients, "
                  f"{n_rows} rows  |  {groups}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test split demographic description
+# ─────────────────────────────────────────────────────────────────────────────
+
+def describe_test_split(
+    full_df:  "pd.DataFrame",
+    train_df: "pd.DataFrame",
+    val_df:   "pd.DataFrame",
+    test_df:  "pd.DataFrame",
+    audio_cols: list = None,
+) -> tuple:
+    """
+    Build a demographic profile of the test split patients and return:
+        (demo_df, flags, latex_table)
+
+    Parameters
+    ----------
+    full_df   : full clinical CSV (all patients, all sessions)
+    train_df  : training partition (output of patient_level_split)
+    val_df    : validation partition
+    test_df   : test partition
+    audio_cols: list of audio channel column names to count recordings
+
+    Returns
+    -------
+    demo_df     : pd.DataFrame — one row per test patient
+    flags       : list[str]   — demographic imbalance warnings
+    latex_table : str         — booktabs LaTeX table for methodology chapter
+    """
+    import numpy as np
+    import pandas as pd
+
+    GROUP_LABEL = {
+        "FESS":    "FESS (CRS)",
+        "Contr":   "Control",
+        "Sept":    "Septoplasty",
+        "Tonsill": "Tonsillectomy",
+    }
+
+    if audio_cols is None:
+        # Fallback: use any column that looks like an audio path column
+        audio_cols = [c for c in full_df.columns
+                      if c in ("a","e","i","o","u","a1","a2","a3",
+                               "agua","brasero","dia","mesa","speech","un")]
+
+    records  = []
+    test_ids = sorted(test_df["ID"].unique())
+
+    for pid in test_ids:
+        rows  = full_df[full_df["ID"] == pid]
+        if rows.empty:
+            continue
+        group    = rows["GROUP"].iloc[0].strip() if "GROUP" in rows.columns else "?"
+        group_lbl = GROUP_LABEL.get(group, group)
+        sessions  = sorted(rows["session"].dropna().unique().astype(int).tolist()) \
+                    if "session" in rows.columns else []
+        ses_str   = "/".join(str(s) for s in sessions)
+
+        age = None
+        for col in ("Age","AGE","age","edad"):
+            if col in rows.columns:
+                v = rows[col].dropna()
+                if not v.empty:
+                    age = float(v.iloc[0]); break
+
+        gender = None
+        for col in ("Gender","GENDER","gender","sexo","Sex","SEX"):
+            if col in rows.columns:
+                v = rows[col].dropna()
+                if not v.empty:
+                    gender = str(v.iloc[0]).strip(); break
+
+        n_recs = int(sum(rows[c].notna().sum() for c in audio_cols if c in rows.columns))
+
+        records.append({
+            "Patient ID": pid,
+            "Group":      group_lbl,
+            "Sessions":   ses_str,
+            "Age":        f"{age:.0f}" if age is not None else "N/A",
+            "Gender":     gender if gender else "N/A",
+            "Recordings": n_recs,
+        })
+
+    demo_df = pd.DataFrame(records)
+
+    # ── Imbalance flags ────────────────────────────────────────────────────────
+    flags = []
+    fess_n = demo_df["Group"].str.contains("FESS").sum()
+    ctrl_n = demo_df["Group"].str.contains("Control").sum()
+    if fess_n == 0:
+        flags.append("CRITICAL: No FESS patients in test set — cannot estimate sensitivity.")
+    if ctrl_n == 0:
+        flags.append("CRITICAL: No Control patients in test set — cannot estimate specificity.")
+    if fess_n != ctrl_n:
+        flags.append(
+            f"WARN: Unequal class balance ({fess_n} FESS vs {ctrl_n} Control) — "
+            "macro-F1 and AUC do not reflect a balanced operating point."
+        )
+    ages = pd.to_numeric(demo_df["Age"], errors="coerce").dropna()
+    if len(ages) > 1 and ages.std() < 5:
+        flags.append(
+            f"WARN: Low age variance in test set (σ={ages.std():.1f}) — "
+            "results may not generalise across age groups."
+        )
+    genders = demo_df[demo_df["Gender"] != "N/A"]["Gender"].str.upper()
+    if len(genders) > 0 and genders.nunique() == 1:
+        flags.append(
+            f"WARN: All test patients are {genders.iloc[0]} — "
+            "gender-specific vocal tract differences may affect generalisation."
+        )
+    if not any("1" in s for s in demo_df["Sessions"].tolist()):
+        flags.append(
+            "WARN: No Session 1 (pre-op) recordings in test — "
+            "cannot evaluate pre-operative detection performance."
+        )
+    if not flags:
+        flags.append("No critical imbalances detected.")
+
+    # ── LaTeX table ────────────────────────────────────────────────────────────
+    n_tr = train_df["ID"].nunique()
+    n_va = val_df["ID"].nunique()
+    n_te = test_df["ID"].nunique()
+
+    lines = [
+        r"\begin{table}[h]",
+        r"\centering",
+        r"\caption{Demographic profile of the %d test-split patients "
+        r"(seed=42, stratified patient-level split: %d train / %d val / %d test). "
+        r"Session numbers: 1\,=\,pre-operative, 2\,=\,2-week post-operative, "
+        r"3\,=\,3-month post-operative. "
+        r"Recordings: non-empty audio channel cells available for the patient.}" % (n_te, n_tr, n_va, n_te),
+        r"\label{tab:test_split_demographics}",
+        r"\begin{tabular}{llcccr}",
+        r"\toprule",
+        r"Patient & Group & Sessions & Age & Gender & Recordings \\",
+        r"\midrule",
+    ]
+
+    fess_rows  = demo_df[demo_df["Group"].str.contains("FESS")]
+    other_rows = demo_df[~demo_df["Group"].str.contains("FESS")]
+    for df_part, first in [(fess_rows, True), (other_rows, False)]:
+        if not df_part.empty and not first:
+            lines.append(r"\addlinespace")
+        for _, r in df_part.iterrows():
+            lines.append(
+                f"  {r['Patient ID']} & {r['Group']} & {r['Sessions']} & "
+                f"{r['Age']} & {r['Gender']} & {r['Recordings']} \\\\"
+            )
+
+    lines += [
+        r"\midrule",
+        rf"  \multicolumn{{2}}{{l}}{{Total}} & & & & {demo_df['Recordings'].sum()} \\",
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\end{table}",
+    ]
+    latex_table = "\n".join(lines)
+
+    return demo_df, flags, latex_table
+
+
+# ── CLI entry point ─────────────────────────────────────────────────────────-
+if __name__ == "__main__":
+    import argparse, sys
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(
+        description="Describe the demographic profile of the test split."
+    )
+    parser.add_argument("--csv",         required=True,
+                        help="Path to clinical_all_sessions.csv")
+    parser.add_argument("--output_tex",  default=None,
+                        help="Path to write the LaTeX table (optional)")
+    args = parser.parse_args()
+
+    import pandas as pd
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from src.pipeline.splits import patient_level_split, describe_test_split
+
+    full_df = pd.read_csv(args.csv)
+    full_df["GROUP"] = full_df["GROUP"].str.strip()
+    exp1_df = full_df[full_df["GROUP"].isin(["FESS","Contr"])].copy()
+
+    train_df, val_df, test_df = patient_level_split(
+        exp1_df, test_size=0.20, val_size=0.10, seed=42, stratify_col="GROUP"
+    )
+
+    demo_df, flags, latex = describe_test_split(
+        full_df, train_df, val_df, test_df
+    )
+
+    print("\n" + "═"*60)
+    print("  TEST SPLIT DEMOGRAPHIC PROFILE")
+    print("═"*60)
+    print(demo_df.to_string(index=False))
+    print("\n  Flags:")
+    for f in flags:
+        print(f"  • {f}")
+    print("\n  LaTeX Table:\n")
+    print(latex)
+
+    if args.output_tex:
+        Path(args.output_tex).write_text(latex)
+        print(f"\nLaTeX written → {args.output_tex}")
