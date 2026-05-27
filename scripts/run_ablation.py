@@ -34,6 +34,7 @@ Usage
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -121,9 +122,15 @@ def build_cmd(segment_dir, csv_path, run_out, overrides):
 
 
 def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
-    safe   = label.replace(" ","_").replace("=","").replace("[","").replace("]","")
-    run_out = factor_dir / safe
-    cmd    = build_cmd(segment_dir, csv_path, run_out, overrides)
+    # Flat layout: ablation/freeze_freeze4CURRENT/ — no nested subfolders
+    safe    = re.sub(r"_+", "_",
+                label.replace(" ","_").replace("=","_")
+                     .replace("[","").replace("]","")
+                     .replace("(","").replace(")","")
+                     .replace("/","_").replace("γ","g")
+                     .replace("λ","L")).strip("_")
+    run_out = factor_dir.parent / f"{factor_dir.name}_{safe}"
+    cmd     = build_cmd(segment_dir, csv_path, run_out, overrides)
 
     print(f"\n  {'─'*58}")
     print(f"  {label}")
@@ -171,8 +178,7 @@ def phase_run(args):
         print(f"\n{'═'*62}")
         print(f"  ABLATION: {factor.upper()}  |  backbone=XLS-R  |  exp=1")
         print("═"*62)
-        factor_dir = out / factor
-        factor_dir.mkdir(parents=True, exist_ok=True)
+        factor_dir = out / factor   # used as a prefix, not an actual directory
         rows = []
         for label, overrides in ABLATION_GROUPS[factor]:
             res = run_variant(label, overrides, args.segment_dir,
