@@ -1275,9 +1275,30 @@ class ExperimentReporter:
                     transform=ax.transAxes, fontsize=9,
                     color=MUTED, ha="center")
 
-            # Main title
+            # Main title — derive backbone from results or experiment_name
+            _backbone_raw = (
+                self.results.get("backbone")
+                or self.results.get("config", {}).get("backbone")
+                or ""
+            )
+            _backbone_map = {
+                "wav2vec2": "wav2vec2-base",
+                "wavlm":    "WavLM-base",
+                "xlsr":     "XLS-R-300M",
+            }
+            _backbone_label = _backbone_map.get(
+                str(_backbone_raw).lower().strip(),
+                str(_backbone_raw).upper() if _backbone_raw else "",
+            )
+            if not _backbone_label:
+                _en = self.experiment_name.lower()
+                if "xlsr" in _en:      _backbone_label = "XLS-R-300M"
+                elif "wavlm" in _en:   _backbone_label = "WavLM-base"
+                elif "wav2vec2" in _en:_backbone_label = "wav2vec2-base"
+                else:                  _backbone_label = "SSL Backbone"
+
             ax.text(0.5, 0.78,
-                    "Clinical Voice Classification\nUsing wav2vec 2.0",
+                    f"Clinical Voice Classification\nUsing {_backbone_label}",
                     transform=ax.transAxes, fontsize=22,
                     color=ACCENT, ha="center", fontweight="bold",
                     linespacing=1.4)
@@ -1332,8 +1353,8 @@ class ExperimentReporter:
             ax.axhline(0.10, color=ACCENT, linewidth=1.5,
                        xmin=0.08, xmax=0.92)
             ax.text(0.5, 0.06,
-                    "Automated Classification Report  ·  "
-                    "wav2vec 2.0  ·  Deep Learning Pipeline",
+                    f"Automated Classification Report  ·  "
+                    f"{_backbone_label}  ·  Deep Learning Pipeline",
                     transform=ax.transAxes, fontsize=8,
                     color=MUTED, ha="center")
 
