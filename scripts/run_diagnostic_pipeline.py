@@ -52,16 +52,18 @@ from src.config import TARGET_SR, LEADING_TRIM_S, VAD_THRESHOLD
 from src.utils.paths import resolve_path, COLUMN_TO_SUBFOLDER
 
 # ── Style ─────────────────────────────────────────────────────────────────────
-BG       = "#0B0E14"
-PANEL_BG = "#13161F"
-TEXT     = "#DDE1EE"
-GRID     = "#252836"
+BG       = "#FFFFFF"
+PANEL    = "#F7F9FC"
+TEXT     = "#1C2833"
+BORDER   = "#BDC3C7"
+MUTED    = "#6B7280"
+ACCENT   = "#1A237E"
 
 PALETTE = {
-    "Sept":    "#2196F3",
-    "Fess":    "#E91E63",
-    "Contr":   "#4CAF50",
-    "Tonsill": "#FF9800",
+    "Sept":    "#1565C0",
+    "Fess":    "#C62828",
+    "Contr":   "#2E7D32",
+    "Tonsill": "#E65100",
 }
 STEP_COLORS = {
     "after_trim":      "#4FC3F7",  # light blue
@@ -71,18 +73,18 @@ STEP_COLORS = {
 
 plt.rcParams.update({
     "figure.facecolor": BG,
-    "axes.facecolor":   PANEL_BG,
-    "axes.edgecolor":   GRID,
+    "axes.facecolor":    PANEL,
+    "axes.edgecolor":    BORDER,
     "axes.labelcolor":  TEXT,
     "axes.titlecolor":  TEXT,
     "xtick.color":      TEXT,
     "ytick.color":      TEXT,
-    "grid.color":       GRID,
+    "grid.color":        BORDER,
     "grid.linewidth":   0.5,
     "text.color":       TEXT,
-    "font.family":      "monospace",
-    "legend.facecolor": PANEL_BG,
-    "legend.edgecolor": GRID,
+    "font.family":      "sans-serif",
+    "legend.facecolor":  PANEL,
+    "legend.edgecolor":  BORDER,
 })
 
 OUTPUT_DIR = PROJECT_ROOT / "results" / "Plots and visuals" / "diagnostics"  # overridden by --output_dir
@@ -334,7 +336,7 @@ def plot_stacked_removal(diag: pd.DataFrame):
     ax.set_ylim(0, 108)
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, axis="y", linewidth=0.4)
-    ax.set_facecolor(PANEL_BG)
+    ax.set_facecolor(PANEL)
 
     p = OUTPUT_DIR / "diag_stacked_removal_by_group.png"
     plt.tight_layout()
@@ -384,7 +386,7 @@ def plot_retention_heatmap(diag: pd.DataFrame):
         ax.set_yticks(range(len(GROUPS)))
         ax.set_yticklabels(GROUPS, fontsize=9)
         ax.set_title(title, fontsize=10, color=TEXT, pad=6)
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
 
         for r in range(len(GROUPS)):
             for c in range(len(audio_cols)):
@@ -449,7 +451,7 @@ def plot_per_col_boxplots(diag: pd.DataFrame):
         ax.set_ylabel("% of Audio Removed", fontsize=8)
         ax.set_title(title, fontsize=9, color=TEXT, pad=5)
         ax.grid(True, axis="y", linewidth=0.4)
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
 
     plt.tight_layout()
     p = OUTPUT_DIR / "diag_per_col_boxplots.png"
@@ -503,7 +505,7 @@ def plot_duration_vs_keeprate(diag: pd.DataFrame):
     ax.set_xlim(left=0)
     ax.legend(fontsize=8, loc="lower right")
     ax.grid(True, linewidth=0.4)
-    ax.set_facecolor(PANEL_BG)
+    ax.set_facecolor(PANEL)
 
     plt.tight_layout()
     p = OUTPUT_DIR / "diag_duration_vs_keeprate.png"
@@ -654,7 +656,7 @@ def plot_window_analysis_b(durations: dict):
     ax.set_title("Files Requiring Padding per Window Size",
                  fontsize=11, color=TEXT, pad=8)
     ax.legend(fontsize=9); ax.grid(True, axis="y", linewidth=0.4)
-    ax.set_facecolor(PANEL_BG)
+    ax.set_facecolor(PANEL)
     plt.tight_layout()
     p = OUTPUT_DIR / "diag_window_padding_analysis.png"
     plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
@@ -710,7 +712,7 @@ def plot_window_analysis_b(durations: dict):
                  fontsize=11, color=TEXT, pad=8)
     ax.legend(fontsize=9)
     ax.grid(True, axis="y", linewidth=0.4)
-    ax.set_facecolor(PANEL_BG)
+    ax.set_facecolor(PANEL)
     plt.tight_layout()
     p = OUTPUT_DIR / "diag_duration_distribution_windows.png"
     plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)

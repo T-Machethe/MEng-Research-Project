@@ -46,38 +46,41 @@ from src.config import TARGET_SR
 from src.utils.paths import resolve_path, COLUMN_TO_SUBFOLDER
 
 # ── Style ─────────────────────────────────────────────────────────────────────
-BG       = "#0B0E14"
-PANEL_BG = "#13161F"
-TEXT     = "#DDE1EE"
-GRID     = "#252836"
-ACCENT   = "#00BCD4"
+# ── Academic palette (matches results/thesis figures) ─────────────────────
+BG       = "#FFFFFF"
+PANEL    = "#F7F9FC"
+BORDER   = "#BDC3C7"
+TEXT     = "#1C2833"
+MUTED    = "#6B7280"
+ACCENT   = "#1A237E"
 
+# Group colours — distinct, print-safe
 PALETTE = {
-    "Sept":    "#2196F3",
-    "Fess":    "#E91E63",
-    "Contr":   "#4CAF50",
-    "Tonsill": "#FF9800",
+    "Sept":    "#1565C0",   # royal blue
+    "Fess":    "#C62828",   # deep red
+    "Contr":   "#2E7D32",   # forest green
+    "Tonsill": "#E65100",   # burnt orange
 }
 
 plt.rcParams.update({
     "figure.facecolor":  BG,
-    "axes.facecolor":    PANEL_BG,
-    "axes.edgecolor":    GRID,
+    "axes.facecolor":    PANEL,
+    "axes.edgecolor":    BORDER,
     "axes.labelcolor":   TEXT,
     "axes.titlecolor":   TEXT,
     "xtick.color":       TEXT,
     "ytick.color":       TEXT,
-    "grid.color":        GRID,
+    "grid.color":        BORDER,
     "grid.linewidth":    0.5,
     "text.color":        TEXT,
-    "font.family":       "monospace",
-    "legend.facecolor":  PANEL_BG,
-    "legend.edgecolor":  GRID,
-    "boxplot.whiskerprops.color":  TEXT,
-    "boxplot.capprops.color":      TEXT,
+    "font.family":       "sans-serif",
+    "legend.facecolor":  PANEL,
+    "legend.edgecolor":  BORDER,
+    "boxplot.whiskerprops.color":  MUTED,
+    "boxplot.capprops.color":      MUTED,
     "boxplot.medianprops.color":   ACCENT,
-    "boxplot.flierprops.color":    TEXT,
-    "boxplot.flierprops.markeredgecolor": TEXT,
+    "boxplot.flierprops.color":    MUTED,
+    "boxplot.flierprops.markeredgecolor": MUTED,
 })
 
 OUTPUT_DIR = PROJECT_ROOT / "results" / "Plots and visuals" / "eda"  # overridden by --output_dir
@@ -253,14 +256,14 @@ def plot_duration_distribution(meta: pd.DataFrame):
         ax.set_xticklabels(cols_present, rotation=45, ha="right", fontsize=7)
         ax.set_ylabel("Duration (s)", fontsize=8)
         ax.grid(True, axis="y", linewidth=0.4)
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
 
         # Annotate median per column
         for i, col_data in enumerate(data_by_col, 1):
             if len(col_data):
                 med = np.median(col_data)
                 ax.text(i, med + 0.1, f"{med:.1f}s",
-                        ha="center", va="bottom", fontsize=6, color=ACCENT)
+                        ha="center", va="bottom", fontsize=6, color=MUTED)
 
     plt.tight_layout()
     p = OUTPUT_DIR / "eda_duration_by_group_task.png"
@@ -299,7 +302,7 @@ def plot_duration_distribution(meta: pd.DataFrame):
     ax2.set_xticklabels(GROUPS, fontsize=10)
     ax2.set_ylabel("Duration (s)", fontsize=9)
     ax2.grid(True, axis="y", linewidth=0.4)
-    ax2.set_facecolor(PANEL_BG)
+    ax2.set_facecolor(PANEL)
 
     plt.tight_layout()
     p2 = OUTPUT_DIR / "eda_duration_cross_group.png"
@@ -354,7 +357,7 @@ def plot_missing_heatmap(meta: pd.DataFrame):
         ax.set_yticks(range(len(GROUPS)))
         ax.set_yticklabels(GROUPS, fontsize=9)
         ax.set_title(title, fontsize=10, color=TEXT, pad=6)
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
 
         # Annotate cells
         for r in range(len(GROUPS)):
@@ -441,7 +444,7 @@ def plot_vad_keeprate(meta: pd.DataFrame):
         ax.set_ylabel("VAD Keep-Rate (%)", fontsize=8)
         ax.set_ylim(0, 115)
         ax.grid(True, axis="y", linewidth=0.4)
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
         ax.legend(fontsize=6)
 
         for bar, mean, std in zip(bars, means, stds):
@@ -488,7 +491,7 @@ def plot_vad_keeprate(meta: pd.DataFrame):
     ax2.set_ylim(0, 120)
     ax2.grid(True, axis="y", linewidth=0.4)
     ax2.legend(fontsize=8)
-    ax2.set_facecolor(PANEL_BG)
+    ax2.set_facecolor(PANEL)
 
     plt.tight_layout()
     p2 = OUTPUT_DIR / "eda_vad_keeprate_summary.png"
@@ -576,7 +579,7 @@ def plot_patient_session_counts(df: pd.DataFrame):
                for l in CHANNEL_GROUPS]
     ax.legend(handles=handles, fontsize=8, loc="upper right")
 
-    for a in axes: a.set_facecolor(PANEL_BG)
+    for a in axes: a.set_facecolor(PANEL)
     plt.tight_layout()
     p = OUTPUT_DIR / "eda_patient_session_counts.png"
     plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
@@ -634,7 +637,7 @@ def plot_class_balance(df: pd.DataFrame):
         ax.set_xlabel("Recording Count", fontsize=9)
         ax.set_title(title, fontsize=10, color=TEXT, pad=6)
         ax.set_xlim(0, max(values)*1.35)
-        ax.grid(True,axis="x",linewidth=0.4); ax.set_facecolor(PANEL_BG)
+        ax.grid(True,axis="x",linewidth=0.4); ax.set_facecolor(PANEL)
     plt.tight_layout()
     p = OUTPUT_DIR / "eda_class_balance.png"
     plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
@@ -685,7 +688,7 @@ def plot_demographics(df: pd.DataFrame):
 
     if has_age:
         ax = axes[ax_idx]; ax_idx += 1
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
         for group in GROUPS:
             ages = pat_df[pat_df["_group"]==group][age_col].dropna()
             if ages.empty: continue
@@ -708,7 +711,7 @@ def plot_demographics(df: pd.DataFrame):
 
     if has_gen:
         ax = axes[ax_idx]; ax_idx += 1
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
         gender_counts = (pat_df.groupby(["_group", gen_col])
                                .size()
                                .unstack(fill_value=0)
@@ -851,8 +854,8 @@ def plot_dataset_summary_table(df: pd.DataFrame):
     )
     tbl.auto_set_font_size(False); tbl.set_fontsize(10); tbl.scale(1.2, 1.8)
     for (row, col), cell in tbl.get_celld().items():
-        cell.set_facecolor(PANEL_BG if row > 0 else BG)
-        cell.set_edgecolor(GRID)
+        cell.set_facecolor(PANEL if row > 0 else BG)
+        cell.set_edgecolor(BORDER)
         cell.set_text_props(
             color=TEXT,
             fontweight="bold" if row == 0 else "normal"
@@ -963,7 +966,7 @@ def plot_acoustic_features(df: pd.DataFrame, max_files: int = 9999):
                  fontsize=12, color=TEXT, y=1.02)
 
     for ax, (col, ylabel, title) in zip(axes.flatten(), metrics):
-        ax.set_facecolor(PANEL_BG)
+        ax.set_facecolor(PANEL)
         data = [feat_df[feat_df["group"]==g][col].dropna().values for g in GROUPS]
         bp   = ax.boxplot(data, patch_artist=True, notch=False)
         for patch, group in zip(bp["boxes"], GROUPS):
@@ -1029,7 +1032,7 @@ def plot_duration_consistency(meta: pd.DataFrame):
         return
 
     fig, ax = plt.subplots(figsize=(8, 7), facecolor=BG)
-    ax.set_facecolor(PANEL_BG)
+    ax.set_facecolor(PANEL)
     ax.scatter(paired["ses1"], paired["ses2"],
                color=PALETTE["Fess"], alpha=0.7, s=60, edgecolors="white",
                linewidths=0.5, zorder=3)
