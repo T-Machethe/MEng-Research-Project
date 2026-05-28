@@ -34,6 +34,7 @@ import torchaudio.transforms as T
 warnings.filterwarnings("ignore")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT    = PROJECT_ROOT  # overridden by --data_root in Colab
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.audio.cleaning import (
@@ -127,7 +128,7 @@ def collect_metadata(df: pd.DataFrame,
                 continue
 
             try:
-                path = resolve_path(str(val), PROJECT_ROOT, col=col)
+                path = resolve_path(str(val), DATA_ROOT, col=col)
             except Exception:
                 records.append({
                     "group": group, "id": subj_id,
@@ -501,11 +502,13 @@ def plot_vad_keeprate(meta: pd.DataFrame):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main(max_files: int = 9999, csv_path: str = None, output_dir: str = None):
-    global OUTPUT_DIR
+def main(max_files: int = 9999, csv_path: str = None, output_dir: str = None, data_root: str = None):
+    global OUTPUT_DIR, DATA_ROOT
     if output_dir:
         OUTPUT_DIR = Path(output_dir)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if data_root:
+        DATA_ROOT = Path(data_root)
     if csv_path is None:
         csv_path = str(PROJECT_ROOT / "Data" / "data_final" /
                        "Clinical" / "clinical_all_sessions.csv")
@@ -540,12 +543,19 @@ if __name__ == "__main__":
         help="Path to clinical_all_sessions.csv (defaults to PROJECT_ROOT/Data/...)"
     )
     parser.add_argument(
+        "--data_root", default=None,
+        help="Drive root containing the Data/ folder "
+             "(e.g. /content/drive/MyDrive). Defaults to PROJECT_ROOT."
+    )
+    parser.add_argument(
         "--output_dir", default=None,
         help="Where to save plots (defaults to PROJECT_ROOT/results/Plots and visuals/eda/). "
              "Set to a Drive path in Colab."
     )
     args = parser.parse_args()
 
+    if args.data_root:
+        DATA_ROOT = Path(args.data_root)
     if args.output_dir:
         OUTPUT_DIR = Path(args.output_dir)
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -563,4 +573,5 @@ if __name__ == "__main__":
     else:
         main(max_files=args.max_files,
              csv_path=args.csv_path,
-             output_dir=args.output_dir)
+             output_dir=args.output_dir,
+             data_root=args.data_root)
