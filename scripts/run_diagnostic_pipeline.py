@@ -533,6 +533,204 @@ def run_plots(diag: pd.DataFrame):
     print(f"\nAll diagnostic plots saved to:\n  {OUTPUT_DIR}")
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION B — Window size and segment yield analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+COL_ORDER      = ["a","e","i","o","u","a1","a2","a3",
+                  "agua","brasero","dia","mesa","speech"]
+WIN_CANDIDATES = [0.5, 1.0, 1.5, 2.0, 2.56, 3.072]
+
+
+def collect_durations(df: pd.DataFrame, max_files: int = 9999) -> dict:
+    """Scan raw audio files and collect duration per column per group."""
+    from collections import defaultdict
+    audio_cols = [c for c in COLUMN_TO_SUBFOLDER.keys() if c in df.columns]
+    durations  = defaultdict(lambda: defaultdict(list))
+    n_found = n_missing = n_skip = 0
+
+    print(f"\nScanning up to {max_files} files for window analysis...")
+    for _, row in df.iterrows():
+        group = str(row.get("GROUP", "")).strip()
+        for col in audio_cols:
+            rel = row.get(col)
+            if pd.isna(rel) or str(rel).strip() == "":
+                n_skip += 1; continue
+            try:
+                path = resolve_path(str(rel), DATA_ROOT, col=col)
+                if not path.exists():
+                    n_missing += 1; continue
+                wav, sr = torchaudio.load(str(path))
+                dur = wav.shape[-1] / sr
+                durations[col][group].append(dur)
+                n_found += 1
+                if n_found >= max_files:
+                    print(f"  Reached max_files={max_files}, stopping.")
+                    return dict(durations)
+            except Exception:
+                n_missing += 1
+
+    print(f"  Found: {n_found}  |  Missing: {n_missing}  |  Skipped: {n_skip}")
+    return dict(durations)
+
+
+def print_duration_stats(durations: dict):
+    cols = [c for c in COL_ORDER if c in durations]
+    print("\n" + "="*100)
+    print("  DURATION STATISTICS (seconds)")
+    print("="*100)
+    print(f"  {'col':<10} {'n':>5}  {'min':>6}  {'p10':>6}  "
+          f"{'median':>8}  {'p90':>6}  {'max':>6}  "
+          f"{'<1s%':>7}  {'<2s%':>7}  {'<3s%':>7}")
+    print("-"*100)
+    for col in cols:
+        all_durs = [d for g in durations[col] for d in durations[col][g]]
+        if not all_durs: continue
+        a = np.array(all_durs)
+        print(f"  {col:<10} {len(a):>5}  {a.min():>6.2f}  "
+              f"{np.percentile(a,10):>6.2f}  {np.median(a):>8.2f}  "
+              f"{np.percentile(a,90):>6.2f}  {a.max():>6.2f}  "
+              f"{(a<1.0).mean()*100:>6.1f}%  {(a<2.0).mean()*100:>6.1f}%  "
+              f"{(a<3.0).mean()*100:>6.1f}%")
+
+
+def print_segment_yield(durations: dict):
+    cols = [c for c in COL_ORDER if c in durations]
+    print("\n" + "="*100)
+    print("  MEAN SEGMENTS PER FILE  (50% overlap; files shorter than window → 1 padded)")
+    print("="*100)
+    hdr = f"  {'col':<10}" + "".join(f"  {w:.3f}s" for w in WIN_CANDIDATES)
+    print(hdr); print("-"*len(hdr))
+    for col in cols:
+        all_durs = [d for g in durations[col] for d in durations[col][g]]
+        if not all_durs: continue
+        a = np.array(all_durs)
+        row = f"  {col:<10}"
+        for w in WIN_CANDIDATES:
+            segs = np.where(a >= w,
+                            np.floor((a - w) / (w / 2)).astype(int) + 1, 1)
+            row += f"  {segs.mean():>6.1f}"
+        print(row)
+
+
+def print_window_analysis(durations: dict):
+    all_flat = np.array([d for col in durations
+                         for g in durations[col]
+                         for d in durations[col][g]])
+    print("\n" + "="*60)
+    print("  WINDOW SIZE — % of files needing padding")
+    print("="*60)
+    for w in WIN_CANDIDATES:
+        pct   = (all_flat < w).mean() * 100
+        n_pad = int((all_flat < w).sum())
+        print(f"  {w:.3f}s:  {pct:5.1f}% need padding  ({n_pad} files)")
+
+
+def plot_window_analysis_b(durations: dict):
+    """Three plots for Section B: padding bar, segment yield heatmap, duration dist."""
+    cols     = [c for c in COL_ORDER if c in durations]
+    all_flat = np.array([d for col in durations
+                         for g in durations[col]
+                         for d in durations[col][g]])
+
+    # ── Plot 1: padding proportion ────────────────────────────────────────
+    pcts_pad = [(all_flat < w).mean() * 100 for w in WIN_CANDIDATES]
+    pcts_ok  = [100 - p for p in pcts_pad]
+    x = np.arange(len(WIN_CANDIDATES))
+    fig, ax = plt.subplots(figsize=(10, 5), facecolor=BG)
+    ax.bar(x, pcts_ok,  0.55, label="No padding needed",
+           color="#4CAF50", alpha=0.85)
+    ax.bar(x, pcts_pad, 0.55, bottom=pcts_ok,
+           label="Needs padding", color="#E91E63", alpha=0.85)
+    for i, (pad, ok) in enumerate(zip(pcts_pad, pcts_ok)):
+        ax.text(i, ok + pad / 2, f"{pad:.1f}%",
+                ha="center", va="center", fontsize=9,
+                color=BG, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{w:.3f}s" for w in WIN_CANDIDATES], fontsize=10)
+    ax.set_ylabel("% of Files", fontsize=9)
+    ax.set_ylim(0, 110)
+    ax.set_title("Files Requiring Padding per Window Size",
+                 fontsize=11, color=TEXT, pad=8)
+    ax.legend(fontsize=9); ax.grid(True, axis="y", linewidth=0.4)
+    ax.set_facecolor(PANEL_BG)
+    plt.tight_layout()
+    p = OUTPUT_DIR / "diag_window_padding_analysis.png"
+    plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"  Saved → {p.name}")
+
+    # ── Plot 2: segment yield heatmap ─────────────────────────────────────
+    mat = np.zeros((len(cols), len(WIN_CANDIDATES)))
+    for ci, col in enumerate(cols):
+        all_durs = [d for g in durations[col] for d in durations[col][g]]
+        if not all_durs: continue
+        a = np.array(all_durs)
+        for wi, w in enumerate(WIN_CANDIDATES):
+            segs = np.where(a >= w,
+                            np.floor((a - w) / (w / 2)).astype(int) + 1, 1)
+            mat[ci, wi] = segs.mean()
+
+    fig, ax = plt.subplots(figsize=(12, 7), facecolor=BG)
+    im = ax.imshow(mat, cmap="YlOrRd", aspect="auto",
+                   vmin=0, vmax=mat.max())
+    ax.set_xticks(range(len(WIN_CANDIDATES)))
+    ax.set_xticklabels([f"{w:.3f}s" for w in WIN_CANDIDATES], fontsize=10)
+    ax.set_yticks(range(len(cols)))
+    ax.set_yticklabels(cols, fontsize=9)
+    ax.set_xlabel("Window Size", fontsize=10)
+    ax.set_ylabel("Audio Channel", fontsize=10)
+    ax.set_title("Mean Segments per File by Window Size and Channel\n"
+                 "(50% overlap; short files → 1 padded segment)",
+                 fontsize=11, color=TEXT, pad=10)
+    for r in range(len(cols)):
+        for c in range(len(WIN_CANDIDATES)):
+            ax.text(c, r, f"{mat[r, c]:.1f}", ha="center", va="center",
+                    fontsize=9, fontweight="bold",
+                    color="white" if mat[r, c] > mat.max() * 0.6 else TEXT)
+    plt.colorbar(im, ax=ax, fraction=0.025, pad=0.01).set_label(
+        "Mean Segments", fontsize=9, color=TEXT)
+    plt.tight_layout()
+    p = OUTPUT_DIR / "diag_segment_yield_heatmap.png"
+    plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"  Saved → {p.name}")
+
+    # ── Plot 3: duration distribution with thresholds ─────────────────────
+    fig, ax = plt.subplots(figsize=(12, 5), facecolor=BG)
+    ax.hist(all_flat, bins=60, color=ACCENT, alpha=0.7,
+            edgecolor="none", label=f"All files (n={len(all_flat)})")
+    for w, col in zip([1.0, 2.0, 3.072], ["#69F0AE", "#FF9800", "#FF5252"]):
+        ax.axvline(w, color=col, linewidth=1.8, linestyle="--",
+                   label=f"{w:.3f}s  ({(all_flat<w).mean()*100:.1f}% need padding)")
+    ax.set_xlabel("Raw File Duration (seconds)", fontsize=10)
+    ax.set_ylabel("Number of Files", fontsize=10)
+    ax.set_title("File Duration Distribution with Window Thresholds",
+                 fontsize=11, color=TEXT, pad=8)
+    ax.legend(fontsize=9)
+    ax.grid(True, axis="y", linewidth=0.4)
+    ax.set_facecolor(PANEL_BG)
+    plt.tight_layout()
+    p = OUTPUT_DIR / "diag_duration_distribution_windows.png"
+    plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
+    plt.close(fig)
+    print(f"  Saved → {p.name}")
+
+
+def run_section_b(df: pd.DataFrame, max_files: int = 9999):
+    durations = collect_durations(df, max_files=max_files)
+    if not durations:
+        print("  No audio files found. Check --data_root points to your Drive root.")
+        return
+    print_duration_stats(durations)
+    print_segment_yield(durations)
+    print_window_analysis(durations)
+    print("\n── Window analysis plots ─────────────────────────────────")
+    plot_window_analysis_b(durations)
+    print(f"\nSection B plots saved to:\n  {OUTPUT_DIR}")
+
+
 def main(max_files: int = 9999, csv_path: str = None, output_dir: str = None, data_root: str = None):
     global OUTPUT_DIR, DATA_ROOT
     if output_dir:
@@ -545,19 +743,27 @@ def main(max_files: int = 9999, csv_path: str = None, output_dir: str = None, da
                        "Clinical" / "clinical_all_sessions.csv")
     df = pd.read_csv(csv_path)
 
-    diag = collect_diagnostics(df, max_files=max_files)
+    section = getattr(main, "_section", "all")
 
-    cache_path = OUTPUT_DIR / "diagnostic_cache.csv"
-    diag.to_csv(cache_path, index=False)
-    print(f"\nDiagnostic data cached -> {cache_path}")
+    if section in ("all", "b"):
+        print("\n══ SECTION B: Window Size and Segment Yield Analysis ══")
+        run_section_b(df, max_files=max_files)
 
-    print_summary(diag)
-    run_plots(diag)
+    if section in ("all", "a"):
+        print("\n══ SECTION A: Preprocessing Pipeline Diagnostics ══")
+        diag = collect_diagnostics(df, max_files=max_files)
+        cache_path = OUTPUT_DIR / "diagnostic_cache.csv"
+        diag.to_csv(cache_path, index=False)
+        print(f"\nDiagnostic data cached -> {cache_path}")
+        print_summary(diag)
+        run_plots(diag)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--max_files",  type=int, default=9999)
+    parser.add_argument("--section", choices=["all","a","b"], default="all",
+                        help="a=preprocessing only, b=window analysis only, all=both")
     parser.add_argument("--from_cache", action="store_true")
     parser.add_argument(
         "--csv_path", default=None,
@@ -591,6 +797,7 @@ if __name__ == "__main__":
         print_summary(diag)
         run_plots(diag)
     else:
+        main._section = args.section
         main(max_files=args.max_files,
              csv_path=args.csv_path,
              output_dir=args.output_dir,
