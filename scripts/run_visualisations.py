@@ -197,14 +197,8 @@ def fig_cross_exp_heatmap(all_data: dict, out: Path):
                 ax.text(ci,ri,"—",ha="center",va="center",fontsize=11,color=MUTED)
     cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.01)
     cbar.set_label("Test F1 (macro)", fontsize=9, color=TEXT)
-    ax.set_title("Cross-Experiment Test F1 Summary\n* = partial / pending results",
-                 fontsize=12,fontweight="bold",color=ACCENT,pad=12)
-    ax.text(-0.58, 0.5,  "Scratch",      va="center",ha="right",fontsize=9,
-            color=SCRATCH_W2V, fontweight="bold",rotation=90)
-    ax.text(-0.58, 2.5,  "Finetune",     va="center",ha="right",fontsize=9,
-            color=FINETUNE_W2V,fontweight="bold",rotation=90)
-    ax.text(-0.58, 4,    "Multilingual", va="center",ha="right",fontsize=9,
-            color=XLSR_COLOR,  fontweight="bold",rotation=90)
+    ax.set_title("Cross-Experiment Test F1 — All Models",
+                 fontsize=12,fontweight="bold",color=ACCENT,pad=18)
     plt.tight_layout()
     savefig(fig, out, "thesis_fig_cross_exp_heatmap")
 
@@ -279,27 +273,34 @@ def fig_exp1_performance_v2(all_data: dict, out: Path):
 
 def fig_exp1_confusion(all_data: dict, out: Path):
     exp1 = all_data.get("1",{})
-    cms  = {
-        "wav2vec2\nScratch":  [[1232,170],[169,304]],
-        "wav2vec2\nFinetune": (exp1.get("wav2vec2_finetune",{}).get("test/confusion_matrix")
-                               or [[None,None],[None,None]]),
-        "WavLM\nScratch":     (exp1.get("wavlm_scratch",{}).get("test/confusion_matrix")
-                               or [[1323,79],[324,149]]),
-        "WavLM\nFinetune":    (exp1.get("wavlm_finetune",{}).get("test/confusion_matrix")
-                               or [[None,None],[None,None]]),
-    }
+    # 5 models in a 2×3 grid (bottom-right cell left empty)
+    cms = [
+        ("wav2vec2\nScratch",  [[1232,170],[169,304]]),
+        ("WavLM\nScratch",     (exp1.get("wavlm_scratch",{}).get("test/confusion_matrix")
+                                 or [[1323,79],[324,149]])),
+        ("XLS-R\nFinetune",   exp1.get("xlsr_finetune",{}).get("test/confusion_matrix")),
+        ("wav2vec2\nFinetune", exp1.get("wav2vec2_finetune",{}).get("test/confusion_matrix")),
+        ("WavLM\nFinetune",   exp1.get("wavlm_finetune",{}).get("test/confusion_matrix")),
+    ]
     blues = LinearSegmentedColormap.from_list("b",["#E3F2FD","#1565C0"],N=256)
-    fig, axes = plt.subplots(2,2,figsize=(10,8),facecolor=BG)
-    fig.suptitle("Experiment 1 — Test Set Confusion Matrices",
-                 fontsize=13,fontweight="bold",color=ACCENT)
-    for ax,(lbl,cm) in zip(axes.flatten(),cms.items()):
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9), facecolor=BG)
+    fig.suptitle("Experiment 1 — Test Set Confusion Matrices (All Models)",
+                 fontsize=13, fontweight="bold", color=ACCENT, y=1.01)
+    all_axes = axes.flatten()
+    for idx, (lbl, cm) in enumerate(cms):
+        ax = all_axes[idx]
         if cm is None or any(v is None for row in cm for v in row):
-            ax.axis("off"); continue
+            ax.set_facecolor(PANEL)
+            ax.text(0.5,0.5,"Pending",ha="center",va="center",
+                    transform=ax.transAxes,fontsize=11,color=MUTED,style="italic")
+            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_title(lbl,fontsize=11,fontweight="bold",color=MUTED,pad=8)
+            continue
         cm_arr = np.array(cm); total = cm_arr.sum()
-        im = ax.imshow(cm_arr,cmap=blues,interpolation="nearest")
-        ax.set_title(lbl,fontsize=11,fontweight="bold",color=TEXT,pad=8)
-        ax.set_xlabel("Predicted",fontsize=10,color=TEXT)
-        ax.set_ylabel("True",fontsize=10,color=TEXT)
+        im = ax.imshow(cm_arr, cmap=blues, interpolation="nearest")
+        ax.set_title(lbl, fontsize=11, fontweight="bold", color=TEXT, pad=8)
+        ax.set_xlabel("Predicted", fontsize=10, color=TEXT)
+        ax.set_ylabel("True", fontsize=10, color=TEXT)
         ax.set_xticks([0,1]); ax.set_yticks([0,1])
         ax.set_xticklabels(["Control","FESS"]); ax.set_yticklabels(["Control","FESS"])
         thresh = cm_arr.max()/2.0
@@ -310,7 +311,9 @@ def fig_exp1_confusion(all_data: dict, out: Path):
                         ha="center",va="center",fontsize=11,
                         color="white" if cm_arr[i,j]>thresh else TEXT,
                         fontweight="bold")
-        plt.colorbar(im,ax=ax,fraction=0.046,pad=0.04)
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    # Hide the unused 6th cell
+    all_axes[5].axis("off")
     plt.tight_layout()
     savefig(fig, out, "thesis_fig_exp1_confusion")
 
@@ -339,10 +342,13 @@ def fig_audio_heatmap(exp_data: dict, exp_name: str, out: Path, fname: str):
     # Group separators
     for sep in [4.5, 7.5, 8.5]:
         ax.axvline(sep, color="white", linewidth=2)
-    ax.text(2,   -0.9, "Vowels",    ha="center",fontsize=9,color=TEXT,fontweight="bold")
-    ax.text(6,   -0.9, "Sustained", ha="center",fontsize=9,color=TEXT,fontweight="bold")
-    ax.text(8,   -0.9, "Speech",    ha="center",fontsize=9,color=TEXT,fontweight="bold")
-    ax.text(10.5,-0.9, "TDU Words", ha="center",fontsize=9,color=TEXT,fontweight="bold")
+    # Group labels placed below x-axis via transforms so they don't overlap cells
+    for x_pos, grp_label in [(2,"Vowels"),(6,"Sustained"),(8,"Speech"),(10.5,"TDU Words")]:
+        ax.annotate(grp_label,
+                    xy=(x_pos, len(MODEL_ORDER)-0.5),
+                    xytext=(x_pos, len(MODEL_ORDER)+0.55),
+                    ha="center", fontsize=8.5, color=MUTED,
+                    fontweight="bold", annotation_clip=False)
     for ri in range(heat.shape[0]):
         for ci in range(heat.shape[1]):
             v = heat[ri,ci]
@@ -357,7 +363,7 @@ def fig_audio_heatmap(exp_data: dict, exp_name: str, out: Path, fname: str):
     cbar = plt.colorbar(im, ax=ax, fraction=0.025, pad=0.01)
     cbar.set_label("Test F1 (macro)",fontsize=9,color=TEXT)
     ax.set_title(f"{exp_name} — Per-Audio-Type Test F1 by Model",
-                 fontsize=12,fontweight="bold",color=ACCENT,pad=14)
+                 fontsize=12,fontweight="bold",color=ACCENT,pad=28)
     plt.tight_layout()
     savefig(fig, out, fname)
 
@@ -367,40 +373,60 @@ def fig_audio_heatmap(exp_data: dict, exp_name: str, out: Path, fname: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fig_audio_slope(all_data: dict, out: Path):
+    """
+    Bump chart: rank of each audio channel group across Exp1 and Exp2.
+    Rank 1 = most informative. Crossing lines signal rank inversions.
+    """
     groups    = ["Vowels","Sustained","Speech","TDU Words"]
-    exp1_vals = [0.704, 0.562, 0.769, 0.832]
-    exp2_vals = [0.588, 0.621, 0.481, 0.583]
+    exp1_vals = [0.704, 0.562, 0.769, 0.832]   # F1 Exp1 wav2vec2-scratch
+    exp2_vals = [0.588, 0.621, 0.481, 0.583]   # F1 Exp2 wav2vec2-scratch
     gcolors   = ["#1976D2","#388E3C","#F57C00","#7B1FA2"]
 
-    fig, ax = plt.subplots(figsize=(8,6), facecolor=BG)
+    import scipy.stats as _ss
+    exp1_ranks = _ss.rankdata([-v for v in exp1_vals]).astype(int)  # rank 1 = highest F1
+    exp2_ranks = _ss.rankdata([-v for v in exp2_vals]).astype(int)
+
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor=BG)
     ax.set_facecolor(PANEL)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
 
-    for grp, v1, v2, col in zip(groups, exp1_vals, exp2_vals, gcolors):
-        ax.plot([0,1],[v1,v2],color=col,linewidth=2.2,alpha=0.85,
-                marker="o",markersize=8,zorder=3)
-        ax.text(-0.06, v1, f"{v1:.3f}", ha="right",va="center",
-                fontsize=9.5,color=col,fontweight="bold")
-        ax.text(1.06,  v2, f"{v2:.3f}", ha="left", va="center",
-                fontsize=9.5,color=col,fontweight="bold")
-        mid_y = (v1+v2)/2
-        ax.text(0.5, mid_y+0.015, grp, ha="center",fontsize=9,color=col,
-                fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.2",facecolor="white",
-                          edgecolor=col,alpha=0.85,linewidth=1.2))
+    for grp, r1, r2, v1, v2, col in zip(groups, exp1_ranks, exp2_ranks,
+                                          exp1_vals, exp2_vals, gcolors):
+        ax.plot([0, 1], [r1, r2], color=col, linewidth=2.8, alpha=0.9,
+                marker="o", markersize=11, zorder=3, solid_capstyle="round")
+        # Left labels: rank + F1 value
+        ax.text(-0.06, r1, f"#{r1}  {grp}\nF1={v1:.3f}",
+                ha="right", va="center", fontsize=9.5, color=col, fontweight="bold")
+        # Right labels: rank + F1 value
+        ax.text(1.06, r2, f"#{r2}  {grp}\nF1={v2:.3f}",
+                ha="left", va="center", fontsize=9.5, color=col, fontweight="bold")
 
-    ax.axhline(0.5,color=CHANCE_COLOR,linestyle="--",alpha=0.5,linewidth=1)
-    ax.set_xlim(-0.25,1.25); ax.set_ylim(0.35,1.0)
-    ax.set_xticks([0,1])
-    ax.set_xticklabels(["Experiment 1\n(CRS vs Control)",
-                         "Experiment 2\n(Pre vs Post-op)"],
-                        fontsize=11,fontweight="bold",color=TEXT)
-    ax.set_ylabel("Test F1 (macro) — wav2vec2 Scratch",fontsize=10,color=TEXT)
-    ax.set_title("Audio Channel Diagnostic Value Shifts\nBetween Experimental Conditions",
-                 fontsize=12,fontweight="bold",color=ACCENT,pad=10)
-    ax.yaxis.set_visible(False)
+    ax.set_xlim(-0.5, 1.5)
+    ax.set_ylim(4.6, 0.4)   # inverted so rank 1 is at the top
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(
+        ["Experiment 1\n(CRS vs Control)", "Experiment 2\n(Pre vs Post-op)"],
+        fontsize=11, fontweight="bold", color=TEXT
+    )
+    ax.set_yticks([1, 2, 3, 4])
+    ax.set_yticklabels(["1st\n(most informative)", "2nd", "3rd",
+                         "4th\n(least informative)"],
+                        fontsize=8.5, color=MUTED)
+    ax.yaxis.set_tick_params(length=0)
+    ax.xaxis.set_tick_params(length=0)
+    ax.grid(True, axis="y", alpha=0.2, linestyle="--")
+    ax.set_title(
+        "Audio Channel Rank by Diagnostic Value\n"
+        "Crossing lines indicate a rank inversion between experiments",
+        fontsize=12, fontweight="bold", color=ACCENT, pad=14
+    )
+    ax.text(0.5, 4.45,
+            "wav2vec2-scratch  ·  rank 1 = highest Test F1",
+            ha="center", fontsize=8, color=MUTED, style="italic",
+            transform=ax.transData)
     plt.tight_layout()
     savefig(fig, out, "thesis_fig_audio_slope")
 
@@ -551,58 +577,93 @@ def fig_cross_exp_bars(all_data: dict, out: Path):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fig_scratch_vs_finetune(all_data: dict, out: Path):
+    """
+    Small-multiples: one panel per backbone family.
+    Each panel shows scratch, finetune-MLP and finetune-SVM F1 across 5 exps.
+    Cleaner than a single 8-line chart.
+    """
     exp_keys   = ["1","2","3","4","5"]
+    exp_labels = [EXP_LABELS[k].replace("\n"," ") for k in exp_keys]
     x          = np.arange(len(exp_keys))
-    x_labels   = [EXP_LABELS[k] for k in exp_keys]
 
-    series = [
-        ("wav2vec2 Scratch", "wav2vec2_scratch", g,  SCRATCH_W2V, "-",   "o"),
-        ("WavLM Scratch",    "wavlm_scratch",    g,  SCRATCH_WLM, "-",   "s"),
-        ("wav2vec2 FT",      "wav2vec2_finetune",g,  FINETUNE_W2V,"--",  "^"),
-        ("WavLM FT",         "wavlm_finetune",   g,  FINETUNE_WLM,"--",  "v"),
-        ("XLS-R FT",         "xlsr_finetune",    g,  XLSR_COLOR,  "-.",  "D"),
-        ("WavLM FT-SVM",     "wavlm_finetune",   sv, SVM_COLOR,   ":",   "P"),
+    families = [
+        {
+            "title":  "wav2vec2",
+            "series": [
+                ("Scratch",   "wav2vec2_scratch",  g,  SCRATCH_W2V, "-",  "o"),
+                ("FT (MLP)",  "wav2vec2_finetune", g,  FINETUNE_W2V,"--", "^"),
+                ("FT (SVM)",  "wav2vec2_finetune", sv, SVM_COLOR,   ":",  "P"),
+            ],
+        },
+        {
+            "title":  "WavLM",
+            "series": [
+                ("Scratch",  "wavlm_scratch",  g,  SCRATCH_WLM,  "-",  "s"),
+                ("FT (MLP)", "wavlm_finetune", g,  FINETUNE_WLM, "--", "v"),
+                ("FT (SVM)", "wavlm_finetune", sv, SVM_COLOR,    ":",  "P"),
+            ],
+        },
+        {
+            "title":  "XLS-R (finetune only)",
+            "series": [
+                ("FT (MLP)", "xlsr_finetune", g,  XLSR_COLOR, "--", "D"),
+                ("FT (SVM)", "xlsr_finetune", sv, SVM_COLOR,  ":",  "P"),
+            ],
+        },
     ]
+
     known = {
-        ("wav2vec2_scratch",g):   [0.761,0.509,0.389,0.412,0.516],
-        ("wavlm_scratch",g):      [0.647,0.516,0.293,None, 0.520],
-        ("wav2vec2_finetune",g):  [0.567,0.247,0.321,0.412,0.256],
-        ("wavlm_finetune",g):     [0.579,0.448,0.342,None, 0.365],
-        ("xlsr_finetune",g):      [0.696,0.247,None, None, None ],
-        ("wavlm_finetune",sv):    [0.584,0.530,0.371,None, 0.537],
+        ("wav2vec2_scratch",  g): [0.761,0.509,0.389,0.412,0.516],
+        ("wav2vec2_finetune", g): [0.567,0.247,0.321,0.412,0.256],
+        ("wav2vec2_finetune",sv): [0.562,0.481,0.352,0.496,0.494],
+        ("wavlm_scratch",     g): [0.647,0.516,0.293,None, 0.520],
+        ("wavlm_finetune",    g): [0.579,0.448,0.342,None, 0.365],
+        ("wavlm_finetune",   sv): [0.584,0.530,0.371,None, 0.537],
+        ("xlsr_finetune",     g): [0.696,0.247,None, None, None ],
+        ("xlsr_finetune",    sv): [0.685,0.570,None, None, None ],
     }
 
-    fig, ax = plt.subplots(figsize=(13,6), facecolor=BG)
-    ax.set_facecolor(PANEL)
-    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5.5), facecolor=BG, sharey=True)
+    fig.suptitle("Cross-Experiment Test F1 by Backbone Family",
+                 fontsize=13, fontweight="bold", color=ACCENT, y=1.02)
 
-    for label, mk, mfn, color, ls, marker in series:
-        vals = []
-        kb   = known.get((mk, mfn), [None]*5)
-        for ci, ek in enumerate(exp_keys):
-            res = all_data.get(ek,{}).get(mk,{})
-            v   = mfn(res,"test/f1_macro")
-            if v is None: v = kb[ci]
-            vals.append(v)
-        has = [i for i,v in enumerate(vals) if v is not None]
-        if not has: continue
-        xs = [x[i] for i in has]; ys = [vals[i] for i in has]
-        ax.plot(xs,ys,color=color,linestyle=ls,linewidth=2.2,
-                marker=marker,markersize=7,label=label,alpha=0.9)
-        for xi,yi in zip(xs,ys):
-            ax.annotate(f"{yi:.3f}",xy=(xi,yi),xytext=(0,9),
-                        textcoords="offset points",ha="center",
-                        fontsize=7.5,color=color,fontweight="bold")
+    for ax, fam in zip(axes, families):
+        ax.set_facecolor(PANEL)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    ax.axhline(0.5,color=CHANCE_COLOR,linestyle="--",linewidth=1,alpha=0.5,label="Chance")
-    ax.set_xticks(x); ax.set_xticklabels(x_labels,fontsize=10)
-    ax.set_ylim(0.15,0.95)
-    ax.set_ylabel("Test F1 (macro)",fontsize=11,color=TEXT)
-    ax.set_xlabel("Experiment",fontsize=11,color=TEXT)
-    ax.set_title("Cross-Experiment Test F1: Scratch vs Finetune vs SVM Probe",
-                 fontsize=13,fontweight="bold",color=ACCENT,pad=14)
-    ax.legend(fontsize=8.5,loc="upper right",framealpha=0.9,edgecolor=BORDER,ncol=2)
-    ax.grid(True,axis="y",alpha=0.3)
+        for label, mk, mfn, color, ls, marker in fam["series"]:
+            kb   = known.get((mk, mfn), [None]*5)
+            vals = []
+            for ci, ek in enumerate(exp_keys):
+                res = all_data.get(ek,{}).get(mk,{})
+                v   = mfn(res, "test/f1_macro")
+                if v is None: v = kb[ci]
+                vals.append(v)
+            has = [i for i,v in enumerate(vals) if v is not None]
+            if not has: continue
+            xs  = [x[i] for i in has]
+            ys  = [vals[i] for i in has]
+            ax.plot(xs, ys, color=color, linestyle=ls, linewidth=2.2,
+                    marker=marker, markersize=7, label=label, alpha=0.9)
+            for xi, yi in zip(xs, ys):
+                ax.annotate(f"{yi:.3f}", xy=(xi,yi), xytext=(0,8),
+                            textcoords="offset points", ha="center",
+                            fontsize=7.5, color=color, fontweight="bold")
+
+        ax.axhline(0.5, color=CHANCE_COLOR, linestyle="--",
+                   linewidth=1, alpha=0.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels(exp_labels, fontsize=8.5, rotation=15, ha="right")
+        ax.set_ylim(0.15, 0.95)
+        ax.set_title(fam["title"], fontsize=11, fontweight="bold",
+                     color=TEXT, pad=8)
+        ax.set_xlabel("Experiment", fontsize=9, color=TEXT)
+        ax.grid(True, axis="y", alpha=0.25)
+        ax.legend(fontsize=8.5, loc="upper right",
+                  framealpha=0.9, edgecolor=BORDER)
+
+    axes[0].set_ylabel("Test F1 (macro)", fontsize=11, color=TEXT)
     plt.tight_layout()
     savefig(fig, out, "thesis_fig9_scratch_vs_finetune")
 
@@ -612,55 +673,91 @@ def fig_scratch_vs_finetune(all_data: dict, out: Path):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fig_radar_auc(all_data: dict, out: Path):
-    exp_keys  = ["1","2","3","4","5"]
-    exp_short = ["Exp1\nBinary","Exp2\nSession","Exp3\nTraj.","Exp4\nPaired","Exp5\nGen."]
-    N       = len(exp_keys)
-    angles  = [n/float(N)*2*np.pi for n in range(N)]
-    angles += angles[:1]
+    """
+    Grouped dot plot: strategies on y-axis, AUC on x-axis, one dot per
+    experiment per strategy. Cleaner than radar — precise values, missing
+    data simply absent, easy cross-strategy comparison within each experiment.
+    """
+    exp_keys    = ["1","2","3","4","5"]
+    exp_labels  = [EXP_LABELS[k].replace("\n"," ") for k in exp_keys]
 
     strategies = [
-        ("wav2vec2 Scratch","wav2vec2_scratch",g,  SCRATCH_W2V,"-", 0.9),
-        ("WavLM Scratch",   "wavlm_scratch",   g,  SCRATCH_WLM,"-", 0.9),
-        ("XLS-R FT (MLP)",  "xlsr_finetune",   g,  XLSR_COLOR, "--",0.85),
-        ("WavLM FT (SVM)",  "wavlm_finetune",  sv, SVM_COLOR,  "-.",0.85),
+        ("wav2vec2 Scratch", "wav2vec2_scratch", g,  SCRATCH_W2V),
+        ("WavLM Scratch",    "wavlm_scratch",    g,  SCRATCH_WLM),
+        ("XLS-R FT (MLP)",   "xlsr_finetune",    g,  XLSR_COLOR),
+        ("WavLM FT (SVM)",   "wavlm_finetune",   sv, SVM_COLOR),
     ]
     known_auc = {
-        ("wav2vec2_scratch",g):  [0.831,0.517,0.535,0.557,0.525],
-        ("wavlm_scratch",g):     [0.767,0.523,0.536,None, 0.541],
-        ("xlsr_finetune",g):     [0.791,0.566,None, None, None ],
-        ("wavlm_finetune",sv):   [0.653,0.555,0.541,None, 0.559],
+        ("wav2vec2_scratch", g):  [0.831,0.517,0.535,0.557,0.525],
+        ("wavlm_scratch",    g):  [0.767,0.523,0.536,None, 0.541],
+        ("xlsr_finetune",    g):  [0.791,0.566,None, None, None ],
+        ("wavlm_finetune",   sv): [0.653,0.555,0.541,None, 0.559],
     }
 
-    fig, ax = plt.subplots(figsize=(8,8),subplot_kw=dict(polar=True),facecolor=BG)
-    ax.set_facecolor(PANEL)
-    ax.set_theta_offset(np.pi/2); ax.set_theta_direction(-1)
-    ax.set_xticks(angles[:-1]); ax.set_xticklabels(exp_short,fontsize=9.5,color=TEXT)
-    ax.set_ylim(0.4,0.9)
-    ax.set_yticks([0.5,0.6,0.7,0.8,0.9])
-    ax.set_yticklabels(["0.5","0.6","0.7","0.8","0.9"],fontsize=7.5,color=MUTED)
-    ax.grid(color=BORDER,linewidth=0.8,alpha=0.7)
+    n_strat = len(strategies)
+    n_exp   = len(exp_keys)
 
-    for label, mk, mfn, color, ls, alpha in strategies:
-        kb   = known_auc.get((mk,mfn),[None]*5)
-        vals = []
-        for ci, ek in enumerate(exp_keys):
+    fig, ax = plt.subplots(figsize=(11, 5.5), facecolor=BG)
+    ax.set_facecolor(PANEL)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    y_positions = np.arange(n_strat)
+    offsets     = np.linspace(-0.3, 0.3, n_exp)  # vertical jitter per exp
+
+    for si, (label, mk, mfn, color) in enumerate(strategies):
+        kb = known_auc.get((mk, mfn), [None]*5)
+        for ci, (ek, el) in enumerate(zip(exp_keys, exp_labels)):
             res = all_data.get(ek,{}).get(mk,{})
             v   = mfn(res,"test/roc_auc")
             if v is None: v = kb[ci]
-            vals.append(v if v is not None else 0.5)
-        vals += vals[:1]
-        ax.plot(angles,vals,color=color,linestyle=ls,linewidth=2.2,alpha=alpha,label=label)
-        ax.fill(angles,vals,color=color,alpha=0.08)
-        for angle,val,ek in zip(angles[:-1],vals[:-1],exp_keys):
-            res    = all_data.get(ek,{}).get(mk,{})
-            actual = mfn(res,"test/roc_auc")
-            ax.scatter([angle],[val],color=color,s=50,
-                       marker="o" if actual is not None else "x",zorder=5,alpha=alpha)
+            if v is None: continue
+            y_pos = y_positions[si] + offsets[ci]
+            sc = ax.scatter(v, y_pos, color=color, s=90, zorder=4,
+                            alpha=0.9, edgecolors="white", linewidths=0.6)
+            ax.text(v + 0.006, y_pos, f"{v:.3f}",
+                    va="center", fontsize=7.5, color=color, fontweight="bold")
 
-    ax.set_title("Multi-Experiment AUC Profile\nby Transfer Learning Strategy",
-                 fontsize=12,fontweight="bold",color=ACCENT,pad=20,va="bottom")
-    ax.legend(loc="lower left",bbox_to_anchor=(-0.35,-0.12),
-              fontsize=9,framealpha=0.9,edgecolor=BORDER)
+        # Horizontal range bar
+        vals = [known_auc.get((mk,mfn),[None]*5)[ci] or 0
+                for ci in range(n_exp)
+                if (known_auc.get((mk,mfn),[None]*5)[ci]) is not None]
+        if len(vals) > 1:
+            ax.plot([min(vals), max(vals)], [y_positions[si], y_positions[si]],
+                    color=color, linewidth=1, alpha=0.3, zorder=2)
+
+    # Experiment legend
+    exp_handles = [
+        plt.scatter([], [], s=80, color="#555555",
+                    alpha=0.6+ci*0.08, label=el, edgecolors="white", linewidths=0.6)
+        for ci, el in enumerate(exp_labels)
+    ]
+
+    ax.axvline(0.5, color=CHANCE_COLOR, linestyle="--", linewidth=1.2,
+               alpha=0.6, label="Chance (AUC=0.5)")
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels([s[0] for s in strategies], fontsize=10, color=TEXT)
+    ax.set_xlabel("Test AUC", fontsize=11, color=TEXT)
+    ax.set_xlim(0.44, 0.96)
+    ax.set_title("AUC Profile by Transfer Learning Strategy and Experiment",
+                 fontsize=12, fontweight="bold", color=ACCENT, pad=14)
+    ax.grid(True, axis="x", alpha=0.25)
+
+    # Experiment dot legend
+    for ci, el in enumerate(exp_labels):
+        ax.scatter([], [], s=80, color=MUTED,
+                   alpha=0.5+ci*0.1, label=el,
+                   edgecolors="white", linewidths=0.6)
+    ax.axvline(0.5, color=CHANCE_COLOR, linestyle="--",
+               linewidth=1.2, alpha=0.6)
+
+    # Strategy colour legend
+    strategy_handles = [
+        mpatches.Patch(color=s[3], label=s[0]) for s in strategies
+    ]
+    ax.legend(handles=strategy_handles, fontsize=8.5,
+              loc="lower right", framealpha=0.9, edgecolor=BORDER)
+
     plt.tight_layout()
     savefig(fig, out, "thesis_fig11_radar_auc")
 
