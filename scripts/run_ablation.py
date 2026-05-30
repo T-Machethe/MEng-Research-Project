@@ -170,7 +170,20 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
         return {"label": label, "overrides": overrides, "status": "dry_run"}
 
     cmd = build_cmd(segment_dir, csv_path, run_out, overrides)
-    subprocess.run(cmd, check=False)
+
+    # Capture stderr so failures print the actual error rather than silent code 1
+    result = subprocess.run(cmd, check=False, stderr=subprocess.PIPE, text=True)
+
+    if result.returncode != 0:
+        print(f"\n  ✗  Variant failed (exit {result.returncode}): {label}")
+        if result.stderr and result.stderr.strip():
+            # Print last 40 lines of stderr — enough to see the traceback
+            lines = result.stderr.strip().splitlines()
+            print("\n  --- stderr (last 40 lines) ---")
+            for ln in lines[-40:]:
+                print(f"  {ln}")
+            print("  --- end stderr ---\n")
+        return {"label": label, "overrides": overrides, "status": "failed"}
 
     if res_path.exists():
         return _load_result(label, overrides, run_out)
