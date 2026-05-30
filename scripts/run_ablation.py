@@ -87,6 +87,29 @@ ABLATION_GROUPS = {
 
 CURRENT_MARKER = "[CURRENT]"
 
+# Short folder names — one word per variant, no special characters
+# Structure: ablation/{factor}/{folder_name}/results_summary.json
+VARIANT_FOLDERS = {
+    # freeze
+    "freeze=0  (all layers train)":   "freeze_0",
+    "freeze=2":                        "freeze_2",
+    "freeze=4  [CURRENT]":             "freeze_4",
+    "freeze=6":                        "freeze_6",
+    "freeze=8":                        "freeze_8",
+    "freeze=all  (SVM probe only)":    "freeze_all",
+    # loss
+    "CrossEntropy":                    "ce",
+    "FocalLoss γ=1":                   "focal_g1",
+    "FocalLoss γ=2  [CURRENT]":        "focal_g2",
+    "FocalLoss γ=3":                   "focal_g3",
+    # decay
+    "λ=1.0  (uniform LR)":            "L1p0",
+    "λ=0.9  [CURRENT]":               "L0p9",
+    "λ=0.8":                           "L0p8",
+    "λ=0.7":                           "L0p7",
+}
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PHASE 1 — Training
