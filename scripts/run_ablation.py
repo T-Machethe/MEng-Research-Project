@@ -121,16 +121,44 @@ def build_cmd(segment_dir, csv_path, run_out, overrides):
     return cmd
 
 
+def _safe_label(label: str) -> str:
+    return re.sub(r"_+", "_",
+        label.replace(" ","_").replace("=","_")
+             .replace("[","").replace("]","")
+             .replace("(","").replace(")","")
+             .replace("/","_").replace("γ","g")
+             .replace("λ","L")).strip("_")
+
+
+def _load_result(label, overrides, run_out, status="complete"):
+    res_path = run_out / "results_summary.json"
+    with open(res_path) as f:
+        res = json.load(f)
+    return {
+        "label":     label,
+        "overrides": overrides,
+        "status":    status,
+        "val_f1":    res.get("val/f1_macro"),
+        "test_f1":   res.get("test/f1_macro"),
+        "test_auc":  res.get("test/roc_auc"),
+        "test_acc":  res.get("test/accuracy"),
+        "svm_f1":    res.get("svm", {}).get("test/f1_macro"),
+        "svm_auc":   res.get("svm", {}).get("test/roc_auc"),
+        "epochs":    res.get("epochs_trained"),
+    }
+
+
 def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
-    # Flat layout: ablation/freeze_freeze4CURRENT/ — no nested subfolders
-    safe    = re.sub(r"_+", "_",
-                label.replace(" ","_").replace("=","_")
-                     .replace("[","").replace("]","")
-                     .replace("(","").replace(")","")
-                     .replace("/","_").replace("γ","g")
-                     .replace("λ","L")).strip("_")
-    run_out = factor_dir.parent / f"{factor_dir.name}_{safe}"
-    cmd     = build_cmd(segment_dir, csv_path, run_out, overrides)
+    # factor_dir = ablation/freeze  →  run_out = ablation/freeze/freeze_4/
+    folder  = VARIANT_FOLDERS.get(label, _safe_label(label))
+    run_out = factor_dir / folder
+    res_path = run_out / "results_summary.json"
+
+    # ── Fast skip: results already on disk ───────────────────────────────
+    if res_path.exists():
+        print(f"\n  ↩  SKIP (already complete): {label}")
+        print(f"     {run_out.name}")
+        return _load_result(label, overrides, run_out, status="skipped")
 
     print(f"\n  {'─'*58}")
     print(f"  {label}")
@@ -141,24 +169,11 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
         print("  [DRY RUN — not executed]")
         return {"label": label, "overrides": overrides, "status": "dry_run"}
 
+    cmd = build_cmd(segment_dir, csv_path, run_out, overrides)
     subprocess.run(cmd, check=False)
 
-    res_path = run_out / "results_summary.json"
     if res_path.exists():
-        with open(res_path) as f:
-            res = json.load(f)
-        return {
-            "label":     label,
-            "overrides": overrides,
-            "status":    "complete",
-            "val_f1":    res.get("val/f1_macro"),
-            "test_f1":   res.get("test/f1_macro"),
-            "test_auc":  res.get("test/roc_auc"),
-            "test_acc":  res.get("test/accuracy"),
-            "svm_f1":    res.get("svm", {}).get("test/f1_macro"),
-            "svm_auc":   res.get("svm", {}).get("test/roc_auc"),
-            "epochs":    res.get("epochs_trained"),
-        }
+        return _load_result(label, overrides, run_out)
     return {"label": label, "overrides": overrides, "status": "failed"}
 
 
@@ -178,7 +193,8 @@ def phase_run(args):
         print(f"\n{'═'*62}")
         print(f"  ABLATION: {factor.upper()}  |  backbone=XLS-R  |  exp=1")
         print("═"*62)
-        factor_dir = out / factor   # used as a prefix, not an actual directory
+        factor_dir = out / factor
+        factor_dir.mkdir(parents=True, exist_ok=True)
         rows = []
         for label, overrides in ABLATION_GROUPS[factor]:
             res = run_variant(label, overrides, args.segment_dir,
