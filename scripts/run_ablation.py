@@ -153,8 +153,8 @@ def _safe_label(label: str) -> str:
              .replace("λ","L")).strip("_")
 
 
-def _load_result(label, overrides, run_out, status="complete"):
-    res_path = run_out / "results_summary.json"
+def _load_result(label, overrides, res_path, status="complete"):
+    """Load metrics from a results_summary.json path."""
     with open(res_path) as f:
         res = json.load(f)
     return {
@@ -175,13 +175,17 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
     # factor_dir = ablation/freeze  →  run_out = ablation/freeze/freeze_4/
     folder  = VARIANT_FOLDERS.get(label, _safe_label(label))
     run_out = factor_dir / folder
-    res_path = run_out / "results_summary.json"
 
-    # ── Fast skip: results already on disk ───────────────────────────────
+    # run_experiment.py appends the mode ("finetune") as a subfolder via run_label,
+    # so results_summary.json lands at run_out/finetune/results_summary.json
+    # run_experiment.py uses exp{exp_key}_mixed when no run_label is passed
+    res_path = run_out / f"exp{DEFAULTS['exp']}_mixed" / "results_summary.json"
+
+    # ── Fast skip: check before spawning any subprocess ───────────────────
     if res_path.exists():
         print(f"\n  ↩  SKIP (already complete): {label}")
-        print(f"     {run_out.name}")
-        return _load_result(label, overrides, run_out, status="skipped")
+        print(f"     {res_path}")
+        return _load_result(label, overrides, res_path)
 
     print(f"\n  {'─'*58}")
     print(f"  {label}")
@@ -194,13 +198,12 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
 
     cmd = build_cmd(segment_dir, csv_path, run_out, overrides)
 
-    # Capture stderr so failures print the actual error rather than silent code 1
+    # Capture stderr so failures show the actual traceback
     result = subprocess.run(cmd, check=False, stderr=subprocess.PIPE, text=True)
 
     if result.returncode != 0:
         print(f"\n  ✗  Variant failed (exit {result.returncode}): {label}")
         if result.stderr and result.stderr.strip():
-            # Print last 40 lines of stderr — enough to see the traceback
             lines = result.stderr.strip().splitlines()
             print("\n  --- stderr (last 40 lines) ---")
             for ln in lines[-40:]:
@@ -209,7 +212,7 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
         return {"label": label, "overrides": overrides, "status": "failed"}
 
     if res_path.exists():
-        return _load_result(label, overrides, run_out)
+        return _load_result(label, overrides, res_path)
     return {"label": label, "overrides": overrides, "status": "failed"}
 
 
