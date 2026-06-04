@@ -962,7 +962,7 @@ def plot_acoustic_features(df: pd.DataFrame, max_files: int = 9999):
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG)
     fig.suptitle("Acoustic Feature Distributions — Vowel /a/, Session 1 (Pre-op)\n"
-                 "Comparison across surgical groups (replicates CUCO paper baseline analysis)",
+                 "Comparison across surgical groups",
                  fontsize=12, color=TEXT, y=1.02)
 
     for ax, (col, ylabel, title) in zip(axes.flatten(), metrics):
