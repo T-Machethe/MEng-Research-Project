@@ -20,7 +20,7 @@ Appendix:
   9  thesis_fig_exp2_audio_heatmap
   10 thesis_fig_exp3_audio_heatmap
   11 thesis_fig9_scratch_vs_finetune     Cross-experiment F1 line chart
-  12 thesis_fig11_radar_auc              Radar AUC profile, 4 strategies
+  12 thesis_fig11_auc                    AUC profile, 4 strategies
 
 Usage
 ─────
@@ -200,7 +200,7 @@ def fig_cross_exp_heatmap(all_data: dict, out: Path):
     ax.set_title("Cross-Experiment Test F1 — All Models",
                  fontsize=12,fontweight="bold",color=ACCENT,pad=18)
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig_cross_exp_heatmap")
+    savefig(fig, out, "1. Thesis_fig_cross_exp_heatmap")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -264,7 +264,7 @@ def fig_exp1_performance_v2(all_data: dict, out: Path):
     fig.legend(handles=legend_handles,loc="lower center",ncol=3,
                fontsize=9,framealpha=0.9,edgecolor=BORDER,bbox_to_anchor=(0.5,-0.10))
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig_exp1_performance_v2")
+    savefig(fig, out, "2. Thesis_fig_exp1_performance_v2")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -315,7 +315,7 @@ def fig_exp1_confusion(all_data: dict, out: Path):
     # Hide the unused 6th cell
     all_axes[5].axis("off")
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig_exp1_confusion")
+    savefig(fig, out, "3. Thesis_fig_exp1_confusion")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -428,7 +428,7 @@ def fig_audio_slope(all_data: dict, out: Path):
             ha="center", fontsize=8, color=MUTED, style="italic",
             transform=ax.transData)
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig_audio_slope")
+    savefig(fig, out, "5. Thesis_fig_audio_slope")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -500,7 +500,7 @@ def fig_svm_gain_final(all_data: dict, out: Path):
     cbar = plt.colorbar(im,ax=ax,fraction=0.03,pad=0.02)
     cbar.set_label("ΔF1 (SVM − MLP)",fontsize=9,color=TEXT)
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig_svm_gain_final")
+    savefig(fig, out, "7. Thesis_fig_svm_gain_final")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -569,7 +569,7 @@ def fig_cross_exp_bars(all_data: dict, out: Path):
         ax.legend(fontsize=9,framealpha=0.9,edgecolor=BORDER)
 
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig_cross_exp_bars")
+    savefig(fig, out, "8. Thesis_fig_cross_exp_bars")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -665,11 +665,11 @@ def fig_scratch_vs_finetune(all_data: dict, out: Path):
 
     axes[0].set_ylabel("Test F1 (macro)", fontsize=11, color=TEXT)
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig9_scratch_vs_finetune")
+    savefig(fig, out, "11. Thesis_fig_scratch_vs_finetune")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figure 12 — Radar AUC profile
+# Figure 12 — AUC profile
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fig_radar_auc(all_data: dict, out: Path):
@@ -759,7 +759,7 @@ def fig_radar_auc(all_data: dict, out: Path):
               loc="lower right", framealpha=0.9, edgecolor=BORDER)
 
     plt.tight_layout()
-    savefig(fig, out, "thesis_fig11_radar_auc")
+    savefig(fig, out, "12. Thesis_fig_auc_profile")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -800,7 +800,7 @@ def run_all(all_data: dict, out: Path, figure: int = 0):
     if should_run(4):
         print("\n── Figure 4: Exp1 audio heatmap (v2 incl XLS-R) ───────────")
         fig_audio_heatmap(all_data.get("1",{}), "Experiment 1",
-                          out, "thesis_fig_exp1_audio_heatmap_v2")
+                          out, "4. Thesis_fig_exp1_audio_heatmap")
 
     if should_run(5):
         print("\n── Figure 5: Audio slope chart ──────────────────────────────")
@@ -809,7 +809,7 @@ def run_all(all_data: dict, out: Path, figure: int = 0):
     if should_run(6):
         print("\n── Figure 6: Exp5 audio heatmap ────────────────────────────")
         fig_audio_heatmap(all_data.get("5",{}), "Experiment 5",
-                          out, "thesis_fig_exp5_audio_heatmap")
+                          out, "6. Thesis_fig_exp5_audio_heatmap")
 
     if should_run(7):
         print("\n── Figure 7: SVM gain heatmap ───────────────────────────────")
@@ -822,12 +822,12 @@ def run_all(all_data: dict, out: Path, figure: int = 0):
     if should_run(9):
         print("\n── Figure 9 (App): Exp2 audio heatmap ──────────────────────")
         fig_audio_heatmap(all_data.get("2",{}), "Experiment 2",
-                          out, "thesis_fig_exp2_audio_heatmap")
+                          out, "9. Thesis_fig_exp2_audio_heatmap")
 
     if should_run(10):
         print("\n── Figure 10 (App): Exp3 audio heatmap ─────────────────────")
         fig_audio_heatmap(all_data.get("3",{}), "Experiment 3",
-                          out, "thesis_fig_exp3_audio_heatmap")
+                          out, "10. Thesis_fig_exp3_audio_heatmap")
 
     if should_run(11):
         print("\n── Figure 11 (App): Scratch vs FT line chart ───────────────")
