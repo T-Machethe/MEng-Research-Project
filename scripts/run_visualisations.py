@@ -22,6 +22,12 @@ Appendix:
   11 thesis_fig9_scratch_vs_finetune     Cross-experiment F1 line chart
   12 thesis_fig11_auc                    AUC profile, 4 strategies
 
+Ablation (read from ablation_results.json):
+  13 Thesis_fig_ablation_freeze          Layer freezing ablation
+  14 Thesis_fig_ablation_loss            Loss function ablation
+  15 Thesis_fig_ablation_decay           LR decay factor ablation
+  16 Thesis_fig_ablation_summary         Best-per-condition vs XLS-R baseline
+
 Usage
 ─────
     python scripts/run_visualisations.py --results_dir /path/to/results
@@ -60,6 +66,23 @@ FINETUNE_WLM  = "#FF8A65"
 XLSR_COLOR    = "#6A1B9A"
 SVM_COLOR     = "#00695C"
 CHANCE_COLOR  = "#9E9E9E"
+
+# ── Ablation palette ───────────────────────────────────────────────────────────
+ABL_MLP    = "#2196F3"   # blue  — MLP head bars
+ABL_SVM    = "#4CAF50"   # green — SVM probe bars
+ABL_CUR_EC = "#1a1a2e"   # dark outline for current config
+
+ABL_SAVE_NAMES = {
+    "freeze": "13. Thesis_fig_ablation_freeze",
+    "loss":   "14. Thesis_fig_ablation_loss",
+    "decay":  "15. Thesis_fig_ablation_decay",
+}
+
+ABL_TITLE_MAP = {
+    "freeze": "XLS-R Layer Freezing Ablation — Experiment 1",
+    "loss":   "XLS-R Loss Function Ablation — Experiment 1",
+    "decay":  "XLS-R LR Decay Factor Ablation — Experiment 1",
+}
 
 CMAP_DIV = LinearSegmentedColormap.from_list(
     "crs", ["#C62828","#FFECB3","#1B5E20"], N=256)
@@ -147,7 +170,34 @@ def ax_style(ax):
     ax.spines["right"].set_visible(False)
     ax.grid(True, axis="y", alpha=0.25, zorder=1)
 
+# ── Ablation helpers ───────────────────────────────────────────────────────────
 
+def abl_is_complete(entry: dict) -> bool:
+    return (entry.get("status", "") == "complete"
+            and entry.get("test_f1") is not None)
+
+
+def abl_filter_complete(entries: list) -> list:
+    return [e for e in entries if abl_is_complete(e)]
+
+
+def abl_title(key: str) -> str:
+    return ABL_TITLE_MAP.get(key, f"{key.capitalize()} Ablation — Experiment 1")
+
+
+def abl_save_name(key: str) -> str:
+    return ABL_SAVE_NAMES.get(key, f"Thesis_fig_ablation_{key}")
+
+
+def savefig_abl(fig, out: Path, name: str):
+    """PNG-only save at 180 DPI with #f8f9fa background."""
+    out.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(out / f"{name}.png"), bbox_inches="tight",
+                facecolor="#f8f9fa", dpi=180)
+    plt.close(fig)
+    print(f"  Saved → {name}")
+    
+    
 # ══════════════════════════════════════════════════════════════════════════════
 # Figure 1 — Cross-experiment macro-F1 heatmap
 # ══════════════════════════════════════════════════════════════════════════════
@@ -761,7 +811,229 @@ def fig_radar_auc(all_data: dict, out: Path):
     plt.tight_layout()
     savefig(fig, out, "12. Thesis_fig_auc_profile")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 13/14/15 — per-condition ablation bar chart
+# ══════════════════════════════════════════════════════════════════════════════
 
+def fig_ablation_condition(key: str, entries: list, out: Path) -> bool:
+    """
+    Horizontal two-panel bar chart for one ablation condition.
+    Left panel: Test F1 (macro).  Right panel: Test AUC.
+    Upper bar = SVM probe (green), lower bar = MLP head (blue).
+    Returns True if saved, False if skipped.
+    """
+    complete   = abl_filter_complete(entries)
+    n_total    = len(entries)
+    n_complete = len(complete)
+
+    if n_complete == 0:
+        print(f"Ablation [{key}]: {n_total} entries, "
+              f"0 complete → skipped (no complete entries)")
+        return False
+
+    labels   = [e["label"]        for e in complete]
+    mlp_f1s  = [e["test_f1"]      for e in complete]
+    mlp_aucs = [e.get("test_auc") for e in complete]
+    svm_f1s  = [e.get("svm_f1")   for e in complete]
+    svm_aucs = [e.get("svm_auc")  for e in complete]
+
+    current_idx = next(
+        (i for i, e in enumerate(complete)
+         if "current" in e["label"].lower()), None)
+
+    all_vals = [v for v in mlp_f1s + mlp_aucs + svm_f1s + svm_aucs
+                if v is not None]
+    if not all_vals:
+        print(f"Ablation [{key}]: no plottable values → skipped")
+        return False
+    x_min = round(min(all_vals) - 0.05, 2)
+    x_max = round(max(all_vals) + 0.08, 2)
+
+    fig, (ax_f1, ax_auc) = plt.subplots(
+        1, 2, figsize=(13, 1.8 + 0.75 * n_complete),
+        sharey=True, facecolor="#f8f9fa")
+    fig.suptitle(abl_title(key), fontsize=12, fontweight="bold",
+                 color=ACCENT, y=1.01)
+
+    bar_h = 0.30
+    y_pos = np.arange(n_complete)
+    y_svm = y_pos - 0.18   # upper (higher after invert)
+    y_mlp = y_pos + 0.18   # lower
+
+    for ax, mlp_vals, svm_vals, xlabel in [
+        (ax_f1,  mlp_f1s,  svm_f1s,  "Test F1 (macro)"),
+        (ax_auc, mlp_aucs, svm_aucs, "Test AUC"),
+    ]:
+        ax.set_facecolor(BG)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, axis="x", alpha=0.25, zorder=1)
+
+        for i, (mval, sval) in enumerate(zip(mlp_vals, svm_vals)):
+            is_cur = (i == current_idx)
+            ec = ABL_CUR_EC if is_cur else "white"
+            lw = 2.0        if is_cur else 0.6
+            if mval is not None:
+                ax.barh(y_mlp[i], mval, bar_h, color=ABL_MLP, alpha=0.85,
+                        edgecolor=ec, linewidth=lw, zorder=3)
+                ax.text(mval + 0.003, y_mlp[i], f"{mval:.3f}",
+                        va="center", ha="left", fontsize=8,
+                        fontweight="bold", color=ABL_MLP)
+            if sval is not None:
+                ax.barh(y_svm[i], sval, bar_h, color=ABL_SVM, alpha=0.85,
+                        edgecolor=ec, linewidth=lw, zorder=3)
+                ax.text(sval + 0.003, y_svm[i], f"{sval:.3f}",
+                        va="center", ha="left", fontsize=8,
+                        fontweight="bold", color=ABL_SVM)
+
+        ax.axvline(0.500, color=CHANCE_COLOR, linestyle="--",
+                   linewidth=1.0, alpha=0.7, zorder=2)
+        ax.text(0.500, 1.01, "chance",
+                transform=ax.get_xaxis_transform(),
+                ha="center", va="bottom", fontsize=7.5, color=CHANCE_COLOR)
+        ax.set_xlim(x_min, x_max)
+        ax.set_xlabel(xlabel, fontsize=10, color=TEXT)
+
+    ax_f1.set_yticks(y_pos)
+    ax_f1.set_yticklabels(labels, fontsize=9)
+    ax_f1.invert_yaxis()
+    ax_auc.tick_params(labelleft=False)
+
+    bottom_offset = -0.10 if n_complete <= 6 else -0.05
+    fig.legend(handles=[
+        mpatches.Patch(color=ABL_MLP, label="MLP head"),
+        mpatches.Patch(color=ABL_SVM, label="SVM probe"),
+        mpatches.Patch(facecolor="white", edgecolor=ABL_CUR_EC,
+                       linewidth=2.0, label="Current config"),
+    ], loc="lower center", ncol=3, fontsize=9, framealpha=0.9,
+               bbox_to_anchor=(0.5, bottom_offset))
+
+    plt.tight_layout()
+    name = abl_save_name(key)
+    savefig_abl(fig, out, name)
+
+    fig_num = name.split(".")[0].strip()
+    print(f"Ablation [{key}]: {n_total} entries, "
+          f"{n_complete} complete → saved figure {fig_num}")
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 16 — ablation summary comparison
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_ablation_summary(ablation_data: dict, out: Path):
+    """
+    Single horizontal bar chart: best result per condition vs XLS-R baseline.
+    Only generated when at least two conditions have complete data.
+    """
+    completed = {k: abl_filter_complete(v) for k, v in ablation_data.items()
+                 if abl_filter_complete(v)}
+    n_done = len(completed)
+
+    if n_done < 2:
+        print(f"Ablation summary: skipped ({n_done} condition(s) complete, need ≥2)")
+        return
+
+    # XLS-R baseline from [CURRENT] entry in freeze condition
+    baseline_mlp_auc = baseline_svm_auc = None
+    baseline_label = "XLS-R baseline"
+    if "freeze" in completed:
+        for e in completed["freeze"]:
+            if "current" in e["label"].lower():
+                baseline_mlp_auc = e.get("test_auc")
+                baseline_svm_auc = e.get("svm_auc")
+                clean = (e["label"].replace("[CURRENT]", "")
+                                   .replace("(CURRENT)", "").strip())
+                baseline_label = f"XLS-R baseline\n({clean})"
+                break
+
+    COND_FMT = {
+        "freeze": "Freeze ablation\n(best: {best})",
+        "loss":   "Loss ablation\n(best: {best})",
+        "decay":  "Decay ablation\n(best: \u03bb={best})",
+    }
+    rows = []
+    for key, entries in completed.items():
+        best = max(entries, key=lambda e: e.get("test_auc") or 0.0)
+        best_clean = (best["label"].replace("[CURRENT]", "")
+                                   .replace("(CURRENT)", "").strip())
+        fmt = COND_FMT.get(key, "{key_cap} ablation\n(best: {best})")
+        rows.append({
+            "label":   fmt.format(best=best_clean, key_cap=key.capitalize()),
+            "mlp_auc": best.get("test_auc"),
+            "svm_auc": best.get("svm_auc"),
+        })
+
+    all_rows = [{"label": baseline_label,
+                 "mlp_auc": baseline_mlp_auc,
+                 "svm_auc": baseline_svm_auc}] + rows
+    n_rows   = len(all_rows)
+
+    fig, ax = plt.subplots(figsize=(11, 1.8 + 0.75 * n_rows), facecolor="#f8f9fa")
+    ax.set_facecolor(BG)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(True, axis="x", alpha=0.25, zorder=1)
+
+    bar_h = 0.30
+    y_pos = np.arange(n_rows)
+    y_svm = y_pos - 0.18
+    y_mlp = y_pos + 0.18
+
+    for i, row in enumerate(all_rows):
+        mval, sval = row["mlp_auc"], row["svm_auc"]
+        ec = ABL_CUR_EC if i == 0 else "white"
+        lw = 2.0        if i == 0 else 0.6
+        if mval is not None:
+            ax.barh(y_mlp[i], mval, bar_h, color=ABL_MLP, alpha=0.85,
+                    edgecolor=ec, linewidth=lw, zorder=3)
+            ax.text(mval + 0.003, y_mlp[i], f"{mval:.3f}",
+                    va="center", ha="left", fontsize=8,
+                    fontweight="bold", color=ABL_MLP)
+        if sval is not None:
+            ax.barh(y_svm[i], sval, bar_h, color=ABL_SVM, alpha=0.85,
+                    edgecolor=ec, linewidth=lw, zorder=3)
+            ax.text(sval + 0.003, y_svm[i], f"{sval:.3f}",
+                    va="center", ha="left", fontsize=8,
+                    fontweight="bold", color=ABL_SVM)
+
+    if baseline_mlp_auc is not None:
+        ax.axvline(baseline_mlp_auc, color=ACCENT, linestyle="--",
+                   linewidth=1.2, alpha=0.75, zorder=4)
+        ax.text(baseline_mlp_auc + 0.003, 1.01, "XLS-R baseline (freeze=4)",
+                transform=ax.get_xaxis_transform(),
+                ha="left", va="bottom", fontsize=7.5, color=ACCENT)
+
+    ax.axvline(0.500, color=CHANCE_COLOR, linestyle=":", linewidth=1.0,
+               alpha=0.6, zorder=2)
+    ax.text(0.500, 1.01, "chance", transform=ax.get_xaxis_transform(),
+            ha="center", va="bottom", fontsize=7.5, color=CHANCE_COLOR)
+
+    all_vals = [r[k] for r in all_rows for k in ("mlp_auc", "svm_auc")
+                if r[k] is not None]
+    if all_vals:
+        ax.set_xlim(round(min(all_vals) - 0.05, 2),
+                    round(max(all_vals) + 0.08, 2))
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels([r["label"] for r in all_rows], fontsize=9)
+    ax.invert_yaxis()
+    ax.set_xlabel("Test AUC", fontsize=10, color=TEXT)
+    ax.set_title("Ablation Summary — Best Result per Condition vs XLS-R Baseline",
+                 fontsize=12, fontweight="bold", color=ACCENT, pad=14)
+    fig.legend(handles=[
+        mpatches.Patch(color=ABL_MLP, label="MLP head (best)"),
+        mpatches.Patch(color=ABL_SVM, label="SVM probe (best)"),
+        mpatches.Patch(facecolor="white", edgecolor=ABL_CUR_EC,
+                       linewidth=2.0, label="XLS-R baseline"),
+    ], loc="lower center", ncol=3, fontsize=9, framealpha=0.9,
+               bbox_to_anchor=(0.5, -0.06))
+
+    plt.tight_layout()
+    savefig_abl(fig, out, "16. Thesis_fig_ablation_summary")
+    print(f"Ablation summary: generated ({n_done} conditions complete)")
+    
 # ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -779,10 +1051,15 @@ FIGURE_MAP = {
     10: ("Exp3 audio heatmap (appendix)", None),
     11: ("Scratch vs FT line chart",      fig_scratch_vs_finetune),
     12: ("Radar AUC profile",             fig_radar_auc),
+    13: ("Ablation: freeze depth",        None),   # handled via ablation_data
+    14: ("Ablation: loss function",       None),
+    15: ("Ablation: LR decay",            None),
+    16: ("Ablation: summary comparison",  None),
 }
 
 
-def run_all(all_data: dict, out: Path, figure: int = 0):
+def run_all(all_data: dict, out: Path, figure: int = 0,
+            ablation_data: dict = None):
     def should_run(n): return figure == 0 or figure == n
 
     if should_run(1):
@@ -837,6 +1114,29 @@ def run_all(all_data: dict, out: Path, figure: int = 0):
         print("\n── Figure 12 (App): Radar AUC profile ──────────────────────")
         fig_radar_auc(all_data, out)
 
+    # ── Ablation figures (13–16) — require ablation_results.json ─────────────
+    if ablation_data is None:
+        if any(should_run(n) for n in [13, 14, 15, 16]):
+            print("\n[ablation] No ablation_results.json loaded — skipping figures 13–16.")
+    else:
+        ABL_CONDITION_MAP = {"freeze": 13, "loss": 14, "decay": 15}
+
+        if figure == 0:
+            # Run all conditions present in the JSON
+            print("\n── Figures 13–15: Ablation condition charts ────────────────")
+            for key, entries in ablation_data.items():
+                fig_ablation_condition(key, entries, out)
+        else:
+            # Run only the specifically requested condition
+            for cond, fig_num in ABL_CONDITION_MAP.items():
+                if should_run(fig_num) and cond in ablation_data:
+                    print(f"\n── Figure {fig_num}: Ablation [{cond}] ──────────────────────")
+                    fig_ablation_condition(cond, ablation_data[cond], out)
+
+        if should_run(16):
+            print("\n── Figure 16: Ablation summary ─────────────────────────────")
+            fig_ablation_summary(ablation_data, out)
+
     print(f"\nAll figures saved to:\n  {out}")
 
 
@@ -853,7 +1153,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--figure", type=int, default=0,
-        help="Generate a specific figure only (1-12). 0 = all."
+        help="Generate a specific figure only (1-16). 0 = all."
     )
     args   = parser.parse_args()
     res_d  = Path(args.results_dir)
@@ -864,4 +1164,14 @@ if __name__ == "__main__":
     all_data = load_all(res_d)
     print(f"Loaded {len(all_data)} experiment JSON files: {list(all_data.keys())}")
 
-    run_all(all_data, out_d, figure=args.figure)
+    # Load ablation JSON if present (optional — figures 1–12 run without it)
+    abl_path = res_d / "ablation_results.json"
+    if abl_path.exists():
+        with open(abl_path) as f:
+            ablation_data = json.load(f)
+        print(f"Loaded ablation JSON: {list(ablation_data.keys())}")
+    else:
+        ablation_data = None
+        print("No ablation_results.json found — figures 13–16 will be skipped.")
+
+    run_all(all_data, out_d, figure=args.figure, ablation_data=ablation_data)
