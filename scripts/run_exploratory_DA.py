@@ -600,44 +600,74 @@ def plot_class_balance(df: pd.DataFrame):
         sub = df[mask]
         return int(sub[audio_cols].notna().sum().sum())
 
+    # ── Exp 1: FESS Session 1 only vs all Control sessions ────────────────
+    # (Exp 1 uses pre-op FESS recordings as the positive class; all three
+    #  control sessions are included as the negative class.)
     exp_data = [
         ("Exp 1: CRS vs Control",
-         [("FESS",    count_recs(df["_group"]=="Fess")),
-          ("Control", count_recs(df["_group"]=="Contr"))],
-         ["#E91E63","#4CAF50"]),
+         [("FESS\n(Session 1 only)",  count_recs((df["_group"]=="Fess")&(df["session"]==1))),
+          ("Control\n(all sessions)", count_recs(df["_group"]=="Contr"))],
+         ["#E91E63","#4CAF50"],
+         None),
         ("Exp 2: Pre-op vs Post-op (FESS)",
          [("Session 1\n(pre-op)",  count_recs((df["_group"]=="Fess")&(df["session"]==1))),
           ("Session 2+3\n(post)",  count_recs((df["_group"]=="Fess")&(df["session"]>1)))],
-         ["#4FC3F7","#FF9800"]),
+         ["#4FC3F7","#FF9800"],
+         None),
         ("Exp 3: 3-class Trajectory (FESS)",
          [("Session 1", count_recs((df["_group"]=="Fess")&(df["session"]==1))),
           ("Session 2", count_recs((df["_group"]=="Fess")&(df["session"]==2))),
           ("Session 3", count_recs((df["_group"]=="Fess")&(df["session"]==3)))],
-         ["#4FC3F7","#81C784","#FFB74D"]),
+         ["#4FC3F7","#81C784","#FFB74D"],
+         None),
+        # ── Exp 4: Paired within-patient pre/post (FESS only) ─────────────
+        # Recording-level balance is near-equal (353 vs 352).
+        # Segment-level balance is ~30/70 pre/post due to paired windowing
+        # (post-op segments are drawn from two sessions, pre-op from one).
+        ("Exp 4: Paired Pre/Post (FESS)",
+         [("Session 1\n(pre-op)",  count_recs((df["_group"]=="Fess")&(df["session"]==1))),
+          ("Session 2\n(post-op)", count_recs((df["_group"]=="Fess")&(df["session"]==2)))],
+         ["#9C27B0","#FF5722"],
+         "Segment-level balance ~30/70 (pre/post)\ndue to paired windowing"),
         ("Exp 5: Generalisation",
          [("FESS (train)",         count_recs(df["_group"]=="Fess")),
           ("Septoplasty (test)",   count_recs(df["_group"]=="Sept")),
           ("Tonsillectomy (test)", count_recs(df["_group"]=="Tonsill"))],
-         ["#E91E63","#2196F3","#FF9800"]),
+         ["#E91E63","#2196F3","#FF9800"],
+         None),
     ]
 
-    fig, axes = plt.subplots(2, 2, figsize=(14,10), facecolor=BG)
-    fig.suptitle("Class Balance per Experiment", fontsize=13, color=TEXT, y=1.02)
-    for ax, (title, class_data, colors) in zip(axes.flatten(), exp_data):
+    # ── 2×3 grid — 5 panels, 6th cell hidden ──────────────────────────────
+    fig, axes = plt.subplots(2, 3, figsize=(20, 11), facecolor=BG)
+    fig.suptitle("Class Balance per Experiment (Recording Level)",
+                 fontsize=13, color=TEXT, y=1.02)
+
+    flat_axes = axes.flatten()
+    for ax, (title, class_data, colors, footnote) in zip(flat_axes, exp_data):
         labels = [c[0] for c in class_data]
         values = [c[1] for c in class_data]
         total  = sum(values) or 1
         y      = np.arange(len(labels))
         ax.barh(y, values, color=colors[:len(labels)], alpha=0.85)
-        for i,(val,lbl) in enumerate(zip(values,labels)):
-            ax.text(val + total*0.01, i,
-                    f"{val:,}  ({100*val/total:.1f}%)",
+        for i, val in enumerate(values):
+            ax.text(val + total * 0.01, i,
+                    f"{val:,}  ({100 * val / total:.1f}%)",
                     va="center", fontsize=9, color=TEXT)
-        ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=10)
+        ax.set_yticks(y)
+        ax.set_yticklabels(labels, fontsize=10)
         ax.set_xlabel("Recording Count", fontsize=9)
         ax.set_title(title, fontsize=10, color=TEXT, pad=6)
-        ax.set_xlim(0, max(values)*1.35)
-        ax.grid(True,axis="x",linewidth=0.4); ax.set_facecolor(PANEL)
+        ax.set_xlim(0, max(values) * 1.40)
+        ax.grid(True, axis="x", linewidth=0.4)
+        ax.set_facecolor(PANEL)
+        if footnote:
+            ax.text(0.5, -0.18, footnote,
+                    transform=ax.transAxes, ha="center", va="top",
+                    fontsize=7.5, color="#757575", style="italic")
+
+    # Hide the unused 6th cell
+    flat_axes[-1].set_visible(False)
+
     plt.tight_layout()
     p = OUTPUT_DIR / "eda_class_balance.png"
     plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
