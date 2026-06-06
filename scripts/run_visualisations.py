@@ -1165,11 +1165,15 @@ if __name__ == "__main__":
     print(f"Loaded {len(all_data)} experiment JSON files: {list(all_data.keys())}")
 
     # Load ablation JSON if present (optional — figures 1–12 run without it)
+    # NEW — checks results_dir first, then results_dir/ablation/
     abl_path = res_d / "ablation_results.json"
+    if not abl_path.exists():
+        abl_path = res_d / "ablation" / "ablation_results.json"
+
     if abl_path.exists():
         with open(abl_path) as f:
             ablation_data = json.load(f)
-        print(f"Loaded ablation JSON: {list(ablation_data.keys())}")
+        print(f"Loaded ablation JSON ({abl_path}): {list(ablation_data.keys())}")
     else:
         ablation_data = None
         print("No ablation_results.json found — figures 13–16 will be skipped.")
