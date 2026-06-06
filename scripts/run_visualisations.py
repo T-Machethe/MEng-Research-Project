@@ -886,11 +886,12 @@ def fig_ablation_condition(key: str, entries: list, out: Path) -> bool:
                         va="center", ha="left", fontsize=8,
                         fontweight="bold", color=ABL_SVM)
 
-        ax.axvline(0.500, color=CHANCE_COLOR, linestyle="--",
-                   linewidth=1.0, alpha=0.7, zorder=2)
-        ax.text(0.500, 1.01, "chance",
-                transform=ax.get_xaxis_transform(),
-                ha="center", va="bottom", fontsize=7.5, color=CHANCE_COLOR)
+        if x_min <= 0.500 <= x_max:
+            ax.axvline(0.500, color=CHANCE_COLOR, linestyle="--",
+                    linewidth=1.0, alpha=0.7, zorder=2)
+            ax.text(0.500, 1.01, "chance",
+                    transform=ax.get_xaxis_transform(),
+                    ha="center", va="bottom", fontsize=7.5, color=CHANCE_COLOR)
         ax.set_xlim(x_min, x_max)
         ax.set_xlabel(xlabel, fontsize=10, color=TEXT)
 
@@ -1004,17 +1005,22 @@ def fig_ablation_summary(ablation_data: dict, out: Path):
         ax.text(baseline_mlp_auc + 0.003, 1.01, "XLS-R baseline (freeze=4)",
                 transform=ax.get_xaxis_transform(),
                 ha="left", va="bottom", fontsize=7.5, color=ACCENT)
-
-    ax.axvline(0.500, color=CHANCE_COLOR, linestyle=":", linewidth=1.0,
-               alpha=0.6, zorder=2)
-    ax.text(0.500, 1.01, "chance", transform=ax.get_xaxis_transform(),
-            ha="center", va="bottom", fontsize=7.5, color=CHANCE_COLOR)
-
+  
     all_vals = [r[k] for r in all_rows for k in ("mlp_auc", "svm_auc")
                 if r[k] is not None]
+    
     if all_vals:
-        ax.set_xlim(round(min(all_vals) - 0.05, 2),
-                    round(max(all_vals) + 0.08, 2))
+        x_min = round(min(all_vals) - 0.05, 2)
+        x_max = round(max(all_vals) + 0.08, 2)
+        ax.set_xlim(x_min, x_max)
+    else:
+        x_min, x_max = 0.0, 1.0
+
+    if x_min <= 0.500 <= x_max:
+        ax.axvline(0.500, color=CHANCE_COLOR, linestyle=":",
+                linewidth=1.0, alpha=0.6, zorder=2)
+        ax.text(0.500, 1.01, "chance", transform=ax.get_xaxis_transform(),
+                ha="center", va="bottom", fontsize=7.5, color=CHANCE_COLOR)
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels([r["label"] for r in all_rows], fontsize=9)
