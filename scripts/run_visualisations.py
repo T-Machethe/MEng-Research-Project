@@ -157,9 +157,8 @@ def pat(res: dict, channel: str, metric: str = "f1_macro"):
 
 
 def savefig(fig, out: Path, name: str, dpi: int = 200):
-    for ext in ["pdf","png"]:
-        fig.savefig(str(out/f"{name}.{ext}"), bbox_inches="tight",
-                    facecolor=BG, dpi=dpi if ext=="png" else None)
+    fig.savefig(str(out/f"{name}.png"), bbox_inches="tight",
+                facecolor=BG, dpi=dpi)
     plt.close(fig)
     print(f"  Saved → {name}")
 
@@ -1041,6 +1040,290 @@ def fig_ablation_summary(ablation_data: dict, out: Path):
     print(f"Ablation summary: generated ({n_done} conditions complete)")
     
 # ══════════════════════════════════════════════════════════════════════════════
+# Synthesis helpers — shared by Figures 19 and 20
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Fallback known values [E1, E2, E3, E4, E5]
+_KNOWN_VALS = {
+    ("wav2vec2_scratch",  "f1"):      [0.761, 0.509, 0.389, 0.412, 0.516],
+    ("wav2vec2_scratch",  "auc"):     [0.831, 0.517, 0.535, 0.557, 0.525],
+    ("wavlm_scratch",     "f1"):      [0.647, 0.516, 0.293, 0.504, 0.520],
+    ("wavlm_scratch",     "auc"):     [0.767, 0.523, 0.536, 0.555, 0.541],
+    ("wav2vec2_finetune", "f1"):      [0.567, 0.247, 0.321, 0.412, 0.256],
+    ("wav2vec2_finetune", "auc"):     [0.665, 0.505, 0.489, 0.525, 0.507],
+    ("wav2vec2_finetune", "svm_f1"):  [0.562, 0.481, 0.352, 0.496, 0.494],
+    ("wav2vec2_finetune", "svm_auc"): [0.637, 0.499, 0.507, 0.537, 0.502],
+    ("wavlm_finetune",    "f1"):      [0.579, 0.448, 0.342, 0.502, 0.365],
+    ("wavlm_finetune",    "auc"):     [0.661, 0.574, 0.508, 0.591, 0.528],
+    ("wavlm_finetune",    "svm_f1"):  [0.584, 0.530, 0.371, 0.530, 0.537],
+    ("wavlm_finetune",    "svm_auc"): [0.653, 0.556, 0.541, 0.577, 0.559],
+    ("xlsr_finetune",     "f1"):      [0.696, 0.247, 0.432, 0.412, 0.395],
+    ("xlsr_finetune",     "auc"):     [0.791, 0.566, 0.634, 0.536, 0.556],
+    ("xlsr_finetune",     "svm_f1"):  [0.685, 0.570, 0.414, 0.552, 0.517],
+    ("xlsr_finetune",     "svm_auc"): [0.777, 0.660, 0.615, 0.591, 0.547],
+}
+
+_EXP_KEYS_S    = ["1", "2", "3", "4", "5"]
+_EXP_XLABELS_S = ["E1\nBinary", "E2\nSession", "E3\nTrajectory",
+                  "E4\nPaired", "E5\nGeneralisation"]
+_SCRATCH_MODELS  = ["wav2vec2_scratch", "wavlm_scratch"]
+_FT_MLP_MODELS   = ["wav2vec2_finetune", "wavlm_finetune", "xlsr_finetune"]
+
+_MODEL_SHORT = {
+    ("wav2vec2_scratch",  False): "w2v2-S",
+    ("wavlm_scratch",     False): "WavLM-S",
+    ("wav2vec2_finetune", False): "w2v2-FT",
+    ("wavlm_finetune",    False): "WavLM-FT",
+    ("xlsr_finetune",     False): "XLS-R-FT",
+    ("wav2vec2_finetune", True):  "w2v2-FT-SVM",
+    ("wavlm_finetune",    True):  "WavLM-FT-SVM",
+    ("xlsr_finetune",     True):  "XLS-R-FT-SVM",
+}
+
+# Cell background colours: dark backbone colours for MLP, lighter for SVM probe
+_CELL_COLORS = {
+    ("wav2vec2_scratch",  False): "#1565C0",
+    ("wavlm_scratch",     False): "#004D40",
+    ("wav2vec2_finetune", False): "#1565C0",
+    ("wavlm_finetune",    False): "#004D40",
+    ("xlsr_finetune",     False): "#4A148C",
+    ("wav2vec2_finetune", True):  "#90CAF9",
+    ("wavlm_finetune",    True):  "#80CBC4",
+    ("xlsr_finetune",     True):  "#CE93D8",
+}
+
+_DARK_CELL = {k: v for k, v in [
+    (("wav2vec2_scratch",  False), True),
+    (("wavlm_scratch",     False), True),
+    (("wav2vec2_finetune", False), True),
+    (("wavlm_finetune",    False), True),
+    (("xlsr_finetune",     False), True),
+    (("wav2vec2_finetune", True),  False),
+    (("wavlm_finetune",    True),  False),
+    (("xlsr_finetune",     True),  False),
+]}
+
+
+def _synth_val(all_data, exp, model, metric):
+    """Metric lookup with _KNOWN_VALS fallback. metric: f1|auc|svm_f1|svm_auc."""
+    res = all_data.get(exp, {}).get(model, {})
+    v = (g(res, "test/f1_macro")  if metric == "f1"      else
+         g(res, "test/roc_auc")   if metric == "auc"     else
+         sv(res, "test/f1_macro") if metric == "svm_f1"  else
+         sv(res, "test/roc_auc")  if metric == "svm_auc" else None)
+    if v is not None:
+        return v
+    row = _KNOWN_VALS.get((model, metric), [None] * 5)
+    return row[_EXP_KEYS_S.index(exp)]
+
+
+def _synthesis_table(all_data):
+    """
+    Returns (winners, strat_f1, strat_auc).
+
+    winners[exp][category] = {"f1", "auc", "model", "is_svm"}
+      category ∈ {overall, scratch, ft_mlp, svm}
+
+    strat_f1 / strat_auc: {strategy: [v_e1, v_e2, v_e3, v_e4, v_e5]}
+    """
+    def _best_mlp(exp, models):
+        best = {"f1": None, "auc": None, "model": None, "is_svm": False}
+        for m in models:
+            v = _synth_val(all_data, exp, m, "f1")
+            if v is not None and (best["f1"] is None or v > best["f1"]):
+                best = {"f1": v, "auc": _synth_val(all_data, exp, m, "auc"),
+                        "model": m, "is_svm": False}
+        return best
+
+    def _best_svm(exp):
+        best = {"f1": None, "auc": None, "model": None, "is_svm": True}
+        for m in _FT_MLP_MODELS:
+            v = _synth_val(all_data, exp, m, "svm_f1")
+            if v is not None and (best["f1"] is None or v > best["f1"]):
+                best = {"f1": v, "auc": _synth_val(all_data, exp, m, "svm_auc"),
+                        "model": m, "is_svm": True}
+        return best
+
+    winners   = {}
+    strat_f1  = {"scratch": [], "ft_mlp": [], "svm": []}
+    strat_auc = {"scratch": [], "ft_mlp": [], "svm": []}
+
+    for exp in _EXP_KEYS_S:
+        sc  = _best_mlp(exp, _SCRATCH_MODELS)
+        ft  = _best_mlp(exp, _FT_MLP_MODELS)
+        sv_ = _best_svm(exp)
+        ov  = max((c for c in [sc, ft, sv_] if c["f1"] is not None),
+                  key=lambda c: c["f1"],
+                  default={"f1": None, "auc": None, "model": None, "is_svm": False})
+        winners[exp] = {"overall": ov, "scratch": sc, "ft_mlp": ft, "svm": sv_}
+        strat_f1["scratch"].append(sc["f1"])
+        strat_f1["ft_mlp"].append(ft["f1"])
+        strat_f1["svm"].append(sv_["f1"])
+        strat_auc["scratch"].append(sc["auc"])
+        strat_auc["ft_mlp"].append(ft["auc"])
+        strat_auc["svm"].append(sv_["auc"])
+
+    return winners, strat_f1, strat_auc
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 19 — Cross-experiment strategy lines
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_synthesis_strategy_lines(all_data: dict, out: Path):
+    """
+    Two-panel line chart: best scratch / best FT-MLP / best SVM probe
+    tracked across all five experiments.
+    """
+    _, strat_f1, strat_auc = _synthesis_table(all_data)
+
+    fig, (ax_f1, ax_auc) = plt.subplots(1, 2, figsize=(13, 5), facecolor=BG)
+    fig.suptitle("Cross-Experiment Performance by Strategy",
+                 fontsize=13, fontweight="bold", color=ACCENT, y=1.01)
+
+    x = np.arange(5)
+    lines = [
+        ("scratch", "Best scratch",   SCRATCH_W2V,  "-",  "o"),
+        ("ft_mlp",  "Best FT-MLP",    FINETUNE_W2V, "--", "o"),
+        ("svm",     "Best SVM probe", SVM_COLOR,    ":",  "o"),
+    ]
+
+    panels = [
+        (ax_f1,  strat_f1,  "Test F1 (macro)",
+         [(0.500, "chance (binary)"), (0.333, "chance (3-class)")]),
+        (ax_auc, strat_auc, "Test AUC",
+         [(0.500, "chance")]),
+    ]
+
+    for ax, vals_dict, ylabel, chance_lines in panels:
+        ax.set_facecolor(PANEL)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, axis="y", alpha=0.20, zorder=1)
+
+        for level, label in chance_lines:
+            ax.axhline(level, color=CHANCE_COLOR, linestyle="--",
+                       linewidth=1.0, alpha=0.7, zorder=2)
+            ax.text(4.55, level, label, va="center", ha="left",
+                    fontsize=7.5, color=CHANCE_COLOR)
+
+        for key, label, color, ls, marker in lines:
+            ys = vals_dict[key]
+            xi = [i for i, v in enumerate(ys) if v is not None]
+            yi = [v for v in ys if v is not None]
+            ax.plot([x[i] for i in xi], yi,
+                    color=color, linestyle=ls, linewidth=2.0,
+                    marker=marker, markersize=7, zorder=4, label=label)
+            for pos, (i, v) in enumerate(zip(xi, yi)):
+                off = 0.018 if pos % 2 == 0 else -0.025
+                ax.text(x[i], v + off, f"{v:.3f}",
+                        ha="center",
+                        va="bottom" if off > 0 else "top",
+                        fontsize=7.5, color=color,
+                        fontweight="bold", zorder=5)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(_EXP_XLABELS_S, fontsize=9)
+        ax.set_xlabel("Experiment", fontsize=10, color=TEXT)
+        ax.set_ylabel(ylabel, fontsize=10, color=TEXT)
+        ax.set_xlim(-0.4, 5.2)
+        all_v = [v for ys in vals_dict.values() for v in ys if v is not None]
+        if all_v:
+            ax.set_ylim(round(min(all_v) - 0.06, 2),
+                        round(max(all_v) + 0.08, 2))
+
+    ax_f1.legend(loc="lower left", fontsize=9, framealpha=0.9)
+    plt.tight_layout()
+    fig.savefig(str(out / "19. Thesis_fig_synthesis_strategy_lines.png"),
+                bbox_inches="tight", facecolor=BG, dpi=200)
+    plt.close(fig)
+    print("  Saved → 19. Thesis_fig_synthesis_strategy_lines")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 20 — Cross-experiment winner map
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_synthesis_winner_map(all_data: dict, out: Path):
+    """
+    4-row × 5-column grid showing the winning configuration per
+    experiment per category. Cells colour-coded by backbone.
+    """
+    winners, _, _ = _synthesis_table(all_data)
+
+    ROWS = [
+        ("overall", "Best overall"),
+        ("scratch", "Best scratch"),
+        ("ft_mlp",  "Best FT-MLP"),
+        ("svm",     "Best SVM probe"),
+    ]
+    n_rows, n_cols = len(ROWS), len(_EXP_KEYS_S)
+
+    fig, ax = plt.subplots(
+        figsize=(14, max(4.5, 1.4 * n_rows)), facecolor=BG)
+    ax.set_facecolor(BG)
+    ax.set_xlim(-0.5, n_cols - 0.5)
+    ax.set_ylim(n_rows - 0.5, -0.5)
+    ax.axis("off")
+
+    for ri, (cat_key, _) in enumerate(ROWS):
+        for ci, exp in enumerate(_EXP_KEYS_S):
+            w      = winners[exp][cat_key]
+            model  = w["model"]
+            is_svm = w["is_svm"]
+            f1_v   = w["f1"]
+            auc_v  = w["auc"]
+
+            cell_c = _CELL_COLORS.get((model, is_svm), PANEL) if model else PANEL
+            dark   = _DARK_CELL.get((model, is_svm), False)   if model else False
+            tc     = "white" if dark else TEXT
+
+            ax.add_patch(mpatches.Rectangle(
+                (ci - 0.48, ri - 0.48), 0.96, 0.96,
+                facecolor=cell_c, edgecolor="white", linewidth=2.0, zorder=2))
+
+            short   = _MODEL_SHORT.get((model, is_svm), "—") if model else "—"
+            f1_str  = f"F1  {f1_v:.3f}"  if f1_v  is not None else "F1  —"
+            auc_str = f"AUC {auc_v:.3f}" if auc_v is not None else "AUC —"
+
+            ax.text(ci, ri - 0.18, short,   ha="center", va="center",
+                    fontsize=9,   fontweight="bold", color=tc, zorder=3)
+            ax.text(ci, ri + 0.08, f1_str,  ha="center", va="center",
+                    fontsize=7.5, color=tc, zorder=3)
+            ax.text(ci, ri + 0.28, auc_str, ha="center", va="center",
+                    fontsize=7.5, color=tc, zorder=3)
+
+    # Column headers
+    for ci, lbl in enumerate(_EXP_XLABELS_S):
+        ax.text(ci, -0.62, lbl, ha="center", va="bottom",
+                fontsize=9, fontweight="bold", color=TEXT)
+
+    # Row labels
+    for ri, (_, cat_label) in enumerate(ROWS):
+        ax.text(-0.55, ri, cat_label, ha="right", va="center",
+                fontsize=9, color=TEXT)
+
+    legend_patches = [
+        mpatches.Patch(color="#1565C0", label="wav2vec2 (MLP)"),
+        mpatches.Patch(color="#004D40", label="WavLM (MLP)"),
+        mpatches.Patch(color="#4A148C", label="XLS-R (MLP)"),
+        mpatches.Patch(color="#90CAF9", label="wav2vec2 (SVM probe)"),
+        mpatches.Patch(color="#80CBC4", label="WavLM (SVM probe)"),
+        mpatches.Patch(color="#CE93D8", label="XLS-R (SVM probe)"),
+    ]
+    ax.legend(handles=legend_patches, loc="lower center",
+              bbox_to_anchor=(0.5, -0.22), ncol=3, fontsize=9,
+              framealpha=0.9, title="Backbone / Strategy", title_fontsize=9)
+
+    ax.set_title("Cross-Experiment Winner Map",
+                 fontsize=13, fontweight="bold", color=ACCENT, pad=16)
+    plt.tight_layout()
+    fig.savefig(str(out / "20. Thesis_fig_synthesis_winner_map.png"),
+                bbox_inches="tight", facecolor=BG, dpi=200)
+    plt.close(fig)
+    print("  Saved → 20. Thesis_fig_synthesis_winner_map")
+    
+# ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1061,6 +1344,8 @@ FIGURE_MAP = {
     14: ("Ablation: loss function",       None),
     15: ("Ablation: LR decay",            None),
     16: ("Ablation: summary comparison",  None),
+    19: ("Synthesis strategy lines",      fig_synthesis_strategy_lines),
+    20: ("Synthesis winner map",          fig_synthesis_winner_map),
 }
 
 
@@ -1119,6 +1404,14 @@ def run_all(all_data: dict, out: Path, figure: int = 0,
     if should_run(12):
         print("\n── Figure 12 (App): Radar AUC profile ──────────────────────")
         fig_radar_auc(all_data, out)
+
+    if should_run(19):
+        print("\n── Figure 19: Synthesis strategy lines ─────────────────────")
+        fig_synthesis_strategy_lines(all_data, out)
+
+    if should_run(20):
+        print("\n── Figure 20: Synthesis winner map ─────────────────────────")
+        fig_synthesis_winner_map(all_data, out)
 
     # ── Ablation figures (13–16) — require ablation_results.json ─────────────
     if ablation_data is None:
