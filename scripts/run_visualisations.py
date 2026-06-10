@@ -1246,6 +1246,117 @@ def fig_synthesis_strategy_lines(all_data: dict, out: Path):
 
 def fig_synthesis_winner_map(all_data: dict, out: Path):
     """
+    4×5 winner grid. Cell background encodes F1 performance (YlGn scale).
+    Thin left strip encodes backbone (3 colours). Text shows model name,
+    F1, AUC. Separates performance and identity into distinct visual channels.
+    """
+    winners, _, _ = _synthesis_table(all_data)
+
+    ROWS = [
+        ("overall", "Best overall"),
+        ("scratch", "Best scratch"),
+        ("ft_mlp",  "Best FT-MLP"),
+        ("svm",     "Best SVM probe"),
+    ]
+
+    BACKBONE_STRIP = {
+        "wav2vec2_scratch":  "#1565C0",
+        "wavlm_scratch":     "#00695C",
+        "wav2vec2_finetune": "#1565C0",
+        "wavlm_finetune":    "#00695C",
+        "xlsr_finetune":     "#6A1B9A",
+    }
+
+    n_rows, n_cols = len(ROWS), len(_EXP_KEYS_S)
+
+    # Normalise F1 across all cells for the performance colormap
+    all_f1 = [winners[exp][cat]["f1"]
+              for exp in _EXP_KEYS_S for cat, _ in ROWS
+              if winners[exp][cat]["f1"] is not None]
+    from matplotlib.colors import Normalize
+    norm = Normalize(vmin=0.25, vmax=max(all_f1) + 0.02 if all_f1 else 0.80)
+    cmap = plt.cm.YlGn
+
+    fig, ax = plt.subplots(figsize=(15, 6.5), facecolor=BG)
+    ax.set_facecolor(BG)
+    ax.set_xlim(-0.5, n_cols - 0.5)
+    ax.set_ylim(n_rows - 0.5, -0.5)
+    ax.axis("off")
+
+    for ri, (cat_key, _) in enumerate(ROWS):
+        for ci, exp in enumerate(_EXP_KEYS_S):
+            w     = winners[exp][cat_key]
+            model = w["model"]
+            f1_v  = w["f1"]
+            auc_v = w["auc"]
+
+            # Cell background — performance intensity
+            rgba = cmap(norm(f1_v)) if f1_v is not None else (0.94, 0.94, 0.94, 1)
+            brightness = 0.299*rgba[0] + 0.587*rgba[1] + 0.114*rgba[2]
+            tc = "white" if brightness < 0.52 else TEXT
+
+            ax.add_patch(mpatches.Rectangle(
+                (ci - 0.48, ri - 0.48), 0.96, 0.96,
+                facecolor=rgba, edgecolor="white", linewidth=1.8, zorder=2))
+
+            # Backbone strip — thin left edge (3 colours only)
+            strip_c = BACKBONE_STRIP.get(model, MUTED) if model else MUTED
+            ax.add_patch(mpatches.Rectangle(
+                (ci - 0.48, ri - 0.48), 0.07, 0.96,
+                facecolor=strip_c, edgecolor="none", zorder=3))
+
+            # Text: winner name → F1 → AUC, shifted right of strip
+            short   = _MODEL_SHORT.get((model, w["is_svm"]), "—") if model else "—"
+            f1_str  = f"F1  {f1_v:.3f}"  if f1_v  is not None else "F1  —"
+            auc_str = f"AUC {auc_v:.3f}" if auc_v is not None else "AUC —"
+            tx = ci + 0.06
+            ax.text(tx, ri - 0.16, short,   ha="center", va="center",
+                    fontsize=9, fontweight="bold", color=tc, zorder=4)
+            ax.text(tx, ri + 0.10, f1_str,  ha="center", va="center",
+                    fontsize=8,   color=tc, zorder=4)
+            ax.text(tx, ri + 0.30, auc_str, ha="center", va="center",
+                    fontsize=7.5, color=tc, zorder=4)
+
+    # Column headers — inside axes so they cannot overlap the title
+    for ci, lbl in enumerate(_EXP_XLABELS_S):
+        ax.text(ci, -0.60, lbl, ha="center", va="bottom",
+                fontsize=9, fontweight="bold", color=TEXT)
+
+    # Row labels
+    for ri, (_, cat_label) in enumerate(ROWS):
+        ax.text(-0.55, ri, cat_label, ha="right", va="center",
+                fontsize=9, color=TEXT)
+
+    # Backbone legend (left-strip colours, 3 items only)
+    bb_patches = [
+        mpatches.Patch(color="#1565C0", label="wav2vec2"),
+        mpatches.Patch(color="#00695C", label="WavLM"),
+        mpatches.Patch(color="#6A1B9A", label="XLS-R"),
+    ]
+    ax.legend(handles=bb_patches, loc="lower center",
+              bbox_to_anchor=(0.5, -0.18), ncol=3,
+              fontsize=9, framealpha=0.9,
+              title="Backbone (left strip)", title_fontsize=8)
+
+    # Colorbar for performance scale
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, orientation="vertical",
+                        fraction=0.015, pad=0.02, aspect=20)
+    cbar.set_label("Test F1 (macro)", fontsize=9, color=TEXT)
+    cbar.ax.tick_params(labelsize=8)
+
+    # Use suptitle so it never competes with column headers inside the axes
+    fig.suptitle("Cross-Experiment Winner Map",
+                 fontsize=13, fontweight="bold", color=ACCENT, y=1.02)
+    plt.tight_layout()
+    fig.savefig(str(out / "20. Thesis_fig_synthesis_winner_map.png"),
+                bbox_inches="tight", facecolor=BG, dpi=200)
+    plt.close(fig)
+    print("  Saved → 20. Thesis_fig_synthesis_winner_map")
+    
+    
+    """
     4-row × 5-column grid showing the winning configuration per
     experiment per category. Cells colour-coded by backbone.
     """
