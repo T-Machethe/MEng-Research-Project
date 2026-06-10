@@ -1280,7 +1280,7 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
     fig, ax = plt.subplots(figsize=(15, 6.5), facecolor=BG)
     ax.set_facecolor(BG)
     ax.set_xlim(-0.5, n_cols - 0.5)
-    ax.set_ylim(n_rows - 0.5, -0.5)
+    ax.set_ylim(n_rows - 0.5, -1.0)
     ax.axis("off")
 
     for ri, (cat_key, _) in enumerate(ROWS):
@@ -1319,7 +1319,7 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
 
     # Column headers — inside axes so they cannot overlap the title
     for ci, lbl in enumerate(_EXP_XLABELS_S):
-        ax.text(ci, -0.60, lbl, ha="center", va="bottom",
+        ax.text(ci, -0.75, lbl, ha="center", va="center",
                 fontsize=9, fontweight="bold", color=TEXT)
 
     # Row labels
@@ -1348,7 +1348,7 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
 
     # Use suptitle so it never competes with column headers inside the axes
     fig.suptitle("Cross-Experiment Winner Map",
-                 fontsize=13, fontweight="bold", color=ACCENT, y=1.02)
+                 fontsize=13, fontweight="bold", color=ACCENT, y=1.07)
     plt.tight_layout()
     fig.savefig(str(out / "20. Thesis_fig_synthesis_winner_map.png"),
                 bbox_inches="tight", facecolor=BG, dpi=200)
@@ -1374,7 +1374,7 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
         figsize=(14, max(4.5, 1.4 * n_rows)), facecolor=BG)
     ax.set_facecolor(BG)
     ax.set_xlim(-0.5, n_cols - 0.5)
-    ax.set_ylim(n_rows - 0.5, -0.5)
+    ax.set_ylim(n_rows - 0.5, -1.0)
     ax.axis("off")
 
     for ri, (cat_key, _) in enumerate(ROWS):
@@ -1427,7 +1427,7 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
               framealpha=0.9, title="Backbone / Strategy", title_fontsize=9)
 
     ax.set_title("Cross-Experiment Winner Map",
-                 fontsize=13, fontweight="bold", color=ACCENT, pad=16)
+                 fontsize=13, fontweight="bold", color=ACCENT, pad=18)
     plt.tight_layout()
     fig.savefig(str(out / "20. Thesis_fig_synthesis_winner_map.png"),
                 bbox_inches="tight", facecolor=BG, dpi=200)
