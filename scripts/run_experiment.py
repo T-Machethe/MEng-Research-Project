@@ -500,8 +500,7 @@ def run_compare_backbones(exp_key: str, args) -> None:
 
     for backbone in ["wav2vec2", "wavlm", "xlsr"]:
         for mode in ["scratch", "finetune"]:
-            if backbone == "xlsr" and mode == "scratch":
-                continue
+            
             run_key = f"{backbone}_{mode}"
 
             args.backbone   = backbone
@@ -545,15 +544,14 @@ def run_compare_backbones(exp_key: str, args) -> None:
 
     # ── 4-column comparison table ─────────────────────────────────────────
     cols = ["wav2vec2_scratch", "wav2vec2_finetune",
-            "wavlm_scratch",    "wavlm_finetune",
-            "xlsr_finetune"]
-    col_labels = ["Wav2Vec2-S", "Wav2Vec2-FT", "WavLM-S", "WavLM-FT", "XLS-R-FT"]
+        "wavlm_scratch",    "wavlm_finetune",
+        "xlsr_scratch",     "xlsr_finetune"]
+    col_labels = ["Wav2Vec2-S", "Wav2Vec2-FT", "WavLM-S", "WavLM-FT", "XLS-R-S", "XLS-R-FT"]
 
-    _log.info(f"\n{'═'*100}")
-    _log.info(f"  5-WAY COMPARISON — Experiment {exp_key}")
+    _log.info(f"  6-WAY COMPARISON — Experiment {exp_key}")
     _log.info(f"  {'METRIC':<28}" +
-              "".join(f"  {lbl:>12}" for lbl in col_labels))
-    _log.info(f"  {'─'*86}")
+            "".join(f"  {lbl:>12}" for lbl in col_labels))
+    _log.info(f"  {'─'*100}")
 
     metrics_to_compare = [
         ("Val Accuracy",     "val/accuracy"),

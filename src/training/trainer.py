@@ -177,12 +177,14 @@ class Trainer:
 
         if cfg.mode == "scratch":
             if backbone_type == "xlsr":
-                raise ValueError(
-                    "XLS-R scratch mode is not supported. "
-                    "The value of XLS-R comes from multilingual pretraining. "
-                    "Use --mode finetune for XLS-R."
+                config = Wav2Vec2Config(
+                    hidden_size=1024,
+                    num_hidden_layers=24,
+                    num_attention_heads=16,
+                    intermediate_size=4096,
                 )
-            if backbone_type == "wavlm":
+                backbone = Wav2Vec2Model(config)
+            elif backbone_type == "wavlm":
                 config   = WavLMConfig(
                     hidden_size=768,
                     num_hidden_layers=12,
