@@ -64,6 +64,7 @@ SCRATCH_WLM   = "#42A5F5"
 FINETUNE_W2V  = "#E65100"
 FINETUNE_WLM  = "#FF8A65"
 XLSR_COLOR    = "#6A1B9A"
+XLSR_SCRATCH_COLOR = "#AB47BC"
 SVM_COLOR     = "#00695C"
 CHANCE_COLOR  = "#9E9E9E"
 
@@ -107,10 +108,11 @@ EXP_LABELS = {
 }
 
 MODEL_ORDER  = ["wav2vec2_scratch","wav2vec2_finetune","wavlm_scratch",
-                "wavlm_finetune","xlsr_finetune"]
+                "wavlm_finetune","xlsr_scratch","xlsr_finetune"]
 MODEL_LABELS = ["w2v2\nScratch","w2v2\nFinetune","WavLM\nScratch",
-                "WavLM\nFinetune","XLS-R\nFinetune"]
-MODEL_COLORS = [SCRATCH_W2V, FINETUNE_W2V, SCRATCH_WLM, FINETUNE_WLM, XLSR_COLOR]
+                "WavLM\nFinetune","XLS-R\nScratch","XLS-R\nFinetune"]
+MODEL_COLORS = [SCRATCH_W2V, FINETUNE_W2V, SCRATCH_WLM, FINETUNE_WLM,
+                XLSR_SCRATCH_COLOR, XLSR_COLOR]
 
 AUDIO_TYPES  = ["a","e","i","o","u","a1","a2","a3","speech","agua","brasero","dia","mesa"]
 
@@ -265,10 +267,11 @@ def fig_exp1_performance_v2(all_data: dict, out: Path):
     saucs= [sv(exp1.get(m,{}), "test/roc_auc")      for m in MODEL_ORDER]
 
     # Known fallbacks
-    known_f1  = [0.761,0.567,0.647,0.579,0.696]
-    known_auc = [0.831,0.665,0.767,0.661,0.791]
-    known_sf1 = [None, 0.562,None, 0.584,0.685]
-    known_sau = [None, 0.637,None, 0.653,0.777]
+    known_f1  = [0.761,0.567,0.647,0.579,None, 0.696]
+    known_auc = [0.831,0.665,0.767,0.661,None, 0.791]
+    known_sf1 = [None, 0.562,None, 0.584,None, 0.685]
+    known_sau = [None, 0.637,None, 0.653,None, 0.777]
+
     f1s  = [v if v else known_f1[i]  for i,v in enumerate(f1s)]
     aucs = [v if v else known_auc[i] for i,v in enumerate(aucs)]
     sf1s = [v if v else known_sf1[i] for i,v in enumerate(sf1s)]
@@ -303,15 +306,17 @@ def fig_exp1_performance_v2(all_data: dict, out: Path):
         ax.set_title(ylabel,fontsize=11,color=TEXT,pad=8)
 
     legend_handles = [
-        mpatches.Patch(color=SCRATCH_W2V,  label="wav2vec2 Scratch"),
-        mpatches.Patch(color=FINETUNE_W2V, label="wav2vec2 FT (MLP)"),
-        mpatches.Patch(color=SCRATCH_WLM,  label="WavLM Scratch"),
-        mpatches.Patch(color=FINETUNE_WLM, label="WavLM FT (MLP)"),
-        mpatches.Patch(color=XLSR_COLOR,   label="XLS-R FT (MLP)"),
-        mpatches.Patch(color=SVM_COLOR,    label="FT (SVM probe)"),
-    ]
-    fig.legend(handles=legend_handles,loc="lower center",ncol=3,
-               fontsize=9,framealpha=0.9,edgecolor=BORDER,bbox_to_anchor=(0.5,-0.10))
+    mpatches.Patch(color=SCRATCH_W2V,       label="wav2vec2 Scratch"),
+    mpatches.Patch(color=FINETUNE_W2V,      label="wav2vec2 FT (MLP)"),
+    mpatches.Patch(color=SCRATCH_WLM,       label="WavLM Scratch"),
+    mpatches.Patch(color=FINETUNE_WLM,      label="WavLM FT (MLP)"),
+    mpatches.Patch(color=XLSR_SCRATCH_COLOR,label="XLS-R Scratch"),
+    mpatches.Patch(color=XLSR_COLOR,        label="XLS-R FT (MLP)"),
+    mpatches.Patch(color=SVM_COLOR,         label="FT (SVM probe)"),
+    
+]
+    fig.legend(handles=legend_handles,loc="lower center",ncol=4,
+            fontsize=9,framealpha=0.9,edgecolor=BORDER,bbox_to_anchor=(0.5,-0.10))
     plt.tight_layout()
     savefig(fig, out, "2. Thesis_fig_exp1_performance_v2")
 
@@ -324,12 +329,13 @@ def fig_exp1_confusion(all_data: dict, out: Path):
     exp1 = all_data.get("1",{})
     # 5 models in a 2×3 grid (bottom-right cell left empty)
     cms = [
-        ("wav2vec2\nScratch",  [[1232,170],[169,304]]),
-        ("WavLM\nScratch",     (exp1.get("wavlm_scratch",{}).get("test/confusion_matrix")
-                                 or [[1323,79],[324,149]])),
-        ("XLS-R\nFinetune",   exp1.get("xlsr_finetune",{}).get("test/confusion_matrix")),
-        ("wav2vec2\nFinetune", exp1.get("wav2vec2_finetune",{}).get("test/confusion_matrix")),
-        ("WavLM\nFinetune",   exp1.get("wavlm_finetune",{}).get("test/confusion_matrix")),
+    ("wav2vec2\nScratch",  [[1232,170],[169,304]]),
+    ("WavLM\nScratch",     (exp1.get("wavlm_scratch",{}).get("test/confusion_matrix")
+                             or [[1323,79],[324,149]])),
+    ("XLS-R\nScratch",    exp1.get("xlsr_scratch",{}).get("test/confusion_matrix")),
+    ("wav2vec2\nFinetune", exp1.get("wav2vec2_finetune",{}).get("test/confusion_matrix")),
+    ("WavLM\nFinetune",   exp1.get("wavlm_finetune",{}).get("test/confusion_matrix")),
+    ("XLS-R\nFinetune",   exp1.get("xlsr_finetune",{}).get("test/confusion_matrix")),
     ]
     blues = LinearSegmentedColormap.from_list("b",["#E3F2FD","#1565C0"],N=256)
     fig, axes = plt.subplots(2, 3, figsize=(15, 9), facecolor=BG)
@@ -361,8 +367,7 @@ def fig_exp1_confusion(all_data: dict, out: Path):
                         color="white" if cm_arr[i,j]>thresh else TEXT,
                         fontweight="bold")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    # Hide the unused 6th cell
-    all_axes[5].axis("off")
+   
     plt.tight_layout()
     savefig(fig, out, "3. Thesis_fig_exp1_confusion")
 
@@ -560,9 +565,11 @@ def fig_cross_exp_bars(all_data: dict, out: Path):
     exp_keys = ["1","2","3","4","5"]
 
     strategies = [
-        ("w2v2 Scratch",  "wav2vec2_scratch", "get", SCRATCH_W2V),
-        ("WavLM Scratch", "wavlm_scratch",    "get", SCRATCH_WLM),
-        ("WavLM FT-SVM",  "wavlm_finetune",   "svm", SVM_COLOR),
+    ("w2v2 Scratch",   "wav2vec2_scratch", "get", SCRATCH_W2V),
+    ("WavLM Scratch",  "wavlm_scratch",    "get", SCRATCH_WLM),
+    ("XLS-R Scratch",  "xlsr_scratch",     "get", XLSR_SCRATCH_COLOR),
+    ("WavLM FT-SVM",   "wavlm_finetune",   "svm", SVM_COLOR),
+
     ]
 
     known_f1 = {
@@ -577,7 +584,7 @@ def fig_cross_exp_bars(all_data: dict, out: Path):
     }
 
     fig, axes = plt.subplots(1,2,figsize=(16,7),facecolor=BG)
-    fig.suptitle("Cross-Experiment Performance: 3 Key Strategies",
+    fig.suptitle("Cross-Experiment Performance: Key Strategies",
                  fontsize=13,fontweight="bold",color=ACCENT,y=1.01)
 
     for ax, metric_name, ylabel in [(axes[0],"F1","Test F1 (macro)"),
@@ -587,7 +594,7 @@ def fig_cross_exp_bars(all_data: dict, out: Path):
                              "E4\nPaired","E5\nGen"]
         n_s = len(strategies)
         x   = np.arange(len(exp_keys))
-        w   = 0.25
+        w   = 0.20
 
         for si, (label, mk, mode, color) in enumerate(strategies):
             vals = []
@@ -612,7 +619,7 @@ def fig_cross_exp_bars(all_data: dict, out: Path):
                         fontsize=7.5, color=color, fontweight="bold", va="bottom")
 
         ax.axhline(0.5,color=CHANCE_COLOR,linestyle="--",linewidth=1.2,alpha=0.6)
-        ax.set_xticks(x+w); ax.set_xticklabels(exp_labels_short,fontsize=10)
+        ax.set_xticks(x + w * (n_s - 1) / 2); ax.set_xticklabels(exp_labels_short,fontsize=10)
         ax.set_ylabel(ylabel,fontsize=11,color=TEXT)
         ax.set_ylim(0,1.0); ax.set_title(ylabel,fontsize=11,color=TEXT,pad=8)
         ax.legend(fontsize=9,framealpha=0.9,edgecolor=BORDER)
@@ -653,10 +660,11 @@ def fig_scratch_vs_finetune(all_data: dict, out: Path):
             ],
         },
         {
-            "title":  "XLS-R (finetune only)",
+            "title":  "XLS-R",
             "series": [
-                ("FT (MLP)", "xlsr_finetune", g,  XLSR_COLOR, "--", "D"),
-                ("FT (SVM)", "xlsr_finetune", sv, SVM_COLOR,  ":",  "P"),
+                ("Scratch",  "xlsr_scratch",  g,  XLSR_SCRATCH_COLOR, "-",  "o"),
+                ("FT (MLP)", "xlsr_finetune", g,  XLSR_COLOR,         "--", "D"),
+                ("FT (SVM)", "xlsr_finetune", sv, SVM_COLOR,          ":",  "P"),
             ],
         },
     ]
@@ -668,6 +676,7 @@ def fig_scratch_vs_finetune(all_data: dict, out: Path):
         ("wavlm_scratch",     g): [0.647,0.516,0.293,None, 0.520],
         ("wavlm_finetune",    g): [0.579,0.448,0.342,None, 0.365],
         ("wavlm_finetune",   sv): [0.584,0.530,0.371,None, 0.537],
+        ("xlsr_scratch",      g): [None, None, None, None, None ],
         ("xlsr_finetune",     g): [0.696,0.247,None, None, None ],
         ("xlsr_finetune",    sv): [0.685,0.570,None, None, None ],
     }
@@ -733,12 +742,14 @@ def fig_radar_auc(all_data: dict, out: Path):
     strategies = [
         ("wav2vec2 Scratch", "wav2vec2_scratch", g,  SCRATCH_W2V),
         ("WavLM Scratch",    "wavlm_scratch",    g,  SCRATCH_WLM),
+        ("XLS-R Scratch",    "xlsr_scratch",     g,  XLSR_SCRATCH_COLOR),
         ("XLS-R FT (MLP)",   "xlsr_finetune",    g,  XLSR_COLOR),
         ("WavLM FT (SVM)",   "wavlm_finetune",   sv, SVM_COLOR),
     ]
     known_auc = {
         ("wav2vec2_scratch", g):  [0.831,0.517,0.535,0.557,0.525],
         ("wavlm_scratch",    g):  [0.767,0.523,0.536,None, 0.541],
+        ("xlsr_scratch",     g):  [None, None, None, None, None ],
         ("xlsr_finetune",    g):  [0.791,0.566,None, None, None ],
         ("wavlm_finetune",   sv): [0.653,0.555,0.541,None, 0.559],
     }
@@ -1066,12 +1077,13 @@ _KNOWN_VALS = {
 _EXP_KEYS_S    = ["1", "2", "3", "4", "5"]
 _EXP_XLABELS_S = ["E1\nBinary", "E2\nSession", "E3\nTrajectory",
                   "E4\nPaired", "E5\nGeneralisation"]
-_SCRATCH_MODELS  = ["wav2vec2_scratch", "wavlm_scratch"]
+_SCRATCH_MODELS  = ["wav2vec2_scratch", "wavlm_scratch", "xlsr_scratch"]
 _FT_MLP_MODELS   = ["wav2vec2_finetune", "wavlm_finetune", "xlsr_finetune"]
 
 _MODEL_SHORT = {
     ("wav2vec2_scratch",  False): "w2v2-S",
     ("wavlm_scratch",     False): "WavLM-S",
+    ("xlsr_scratch",      False): "XLS-R-S",
     ("wav2vec2_finetune", False): "w2v2-FT",
     ("wavlm_finetune",    False): "WavLM-FT",
     ("xlsr_finetune",     False): "XLS-R-FT",
@@ -1084,6 +1096,7 @@ _MODEL_SHORT = {
 _CELL_COLORS = {
     ("wav2vec2_scratch",  False): "#1565C0",
     ("wavlm_scratch",     False): "#004D40",
+    ("xlsr_scratch",      False): "#AB47BC", 
     ("wav2vec2_finetune", False): "#1565C0",
     ("wavlm_finetune",    False): "#004D40",
     ("xlsr_finetune",     False): "#4A148C",
@@ -1095,6 +1108,7 @@ _CELL_COLORS = {
 _DARK_CELL = {k: v for k, v in [
     (("wav2vec2_scratch",  False), True),
     (("wavlm_scratch",     False), True),
+    (("xlsr_scratch",      False), True),
     (("wav2vec2_finetune", False), True),
     (("wavlm_finetune",    False), True),
     (("xlsr_finetune",     False), True),
@@ -1418,6 +1432,7 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
         mpatches.Patch(color="#1565C0", label="wav2vec2 (MLP)"),
         mpatches.Patch(color="#004D40", label="WavLM (MLP)"),
         mpatches.Patch(color="#4A148C", label="XLS-R (MLP)"),
+        mpatches.Patch(color="#AB47BC", label="XLS-R Scratch"),
         mpatches.Patch(color="#90CAF9", label="wav2vec2 (SVM probe)"),
         mpatches.Patch(color="#80CBC4", label="WavLM (SVM probe)"),
         mpatches.Patch(color="#CE93D8", label="XLS-R (SVM probe)"),
