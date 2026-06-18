@@ -58,7 +58,8 @@ PURPLE   = "#6C3483"      # tertiary
 
 SCRATCH_COLOR  = "#1565C0"   # strong royal blue   — scratch models
 FINETUNE_COLOR = "#E65100"   # deep burnt orange   — finetune models
-XLSR_COLOR     = "#6A1B9A"   # deep purple         — XLS-R
+XLSR_FINETUNE     = "#6A1B9A"   # deep purple         — XLS-R
+XLSR_SCRATCH   = "#AB47BC"
 SVM_COLOR      = "#00695C"   # deep teal           — SVM probe
 
 plt.rcParams.update({
@@ -655,13 +656,17 @@ class ExperimentReporter:
         7. Confusion matrices grid
         """
         base_cols   = ["wav2vec2_scratch", "wav2vec2_finetune",
-                    "wavlm_scratch",    "wavlm_finetune"]
+            "wavlm_scratch",    "wavlm_finetune"]
         base_labels = ["Wav2Vec2\nScratch", "Wav2Vec2\nFinetune",
                     "WavLM\nScratch",   "WavLM\nFinetune"]
 
+        cols, col_labels = base_cols[:], base_labels[:]
+        if all_results.get("xlsr_scratch"):
+            cols.append("xlsr_scratch")
+            col_labels.append("XLS-R\nScratch")
         if all_results.get("xlsr_finetune"):
-            cols       = base_cols + ["xlsr_finetune"]
-            col_labels = base_labels + ["XLS-R\nFinetune"]
+            cols.append("xlsr_finetune")
+            col_labels.append("XLS-R\nFinetune")
         else:
             cols       = base_cols
             col_labels = base_labels
@@ -760,11 +765,12 @@ class ExperimentReporter:
                 for j in range(len(cols)):
                     tbl[(i + 1, j)].set_facecolor("#eaf4fb")
             # XLS-R column highlight
-            if "xlsr_finetune" in cols:
-                xi = cols.index("xlsr_finetune")
-                for i in range(len(row_defs)):
-                    tbl[(i + 1, xi)].set_facecolor("#fef9e7")
-
+            for xlsr_key, tint in [("xlsr_scratch", "#fce4ec"),
+                        ("xlsr_finetune", "#fef9e7")]:
+                if xlsr_key in cols:
+                    xi = cols.index(xlsr_key)
+                    for i in range(len(row_defs)):
+                        tbl[(i + 1, xi)].set_facecolor(tint)
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
 
@@ -777,13 +783,14 @@ class ExperimentReporter:
 
             bar_colors = []
             for c in cols:
-                if "xlsr" in c:
-                    bar_colors.append(XLSR_COLOR)
+                if c == "xlsr_scratch":
+                    bar_colors.append(XLSR_SCRATCH)
+                elif c == "xlsr_finetune":
+                    bar_colors.append(XLSR_FINETUNE)
                 elif "scratch" in c:
                     bar_colors.append(SCRATCH_COLOR)
                 else:
                     bar_colors.append(FINETUNE_COLOR)
-
             for ax, key, title in [
                 (axes[0], "test/f1_macro", "Test F1 (macro)"),
                 (axes[1], "test/roc_auc",  "Test AUC"),
@@ -804,11 +811,16 @@ class ExperimentReporter:
                             f"{bar.get_height():.3f}",
                             ha="center", va="bottom", fontsize=8, color=TEXT)
             from matplotlib.patches import Patch
-            axes[1].legend(handles=[
-                Patch(color=SCRATCH_COLOR,  label="Scratch"),
-                Patch(color=FINETUNE_COLOR, label="Finetune (MLP)"),
-                Patch(color=XLSR_COLOR,     label="XLS-R FT"),
-            ], fontsize=8, framealpha=0.9, edgecolor=BORDER)
+            _legend_handles = [
+                Patch(color=SCRATCH_COLOR,  label="Scratch (wav2vec2 / WavLM)"),
+                Patch(color=FINETUNE_COLOR, label="Finetune MLP (wav2vec2 / WavLM)"),
+                Patch(color=XLSR_COLOR,     label="XLS-R Finetune"),
+            ]
+            if "xlsr_scratch" in cols:
+                _legend_handles.append(
+                    Patch(color=XLSR_SCRATCH_COLOR, label="XLS-R Scratch"))
+            axes[1].legend(handles=_legend_handles, fontsize=8,
+                        framealpha=0.9, edgecolor=BORDER)
             plt.tight_layout()
             pdf.savefig(fig, bbox_inches="tight", facecolor=BG)
             plt.close(fig)
