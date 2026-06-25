@@ -151,7 +151,7 @@ def run_permutation_test(
     return float(observed), float(null_f1.mean()), float(null_f1.std()), p_val
 
 
-def analysis1(data: dict, out: Path):
+def analysis1(data: dict, out: Path, exp_tag: str = ""):
     print("\n── Analysis 1: Permutation tests ───────────────────────────────")
 
     rows  = []
@@ -218,7 +218,7 @@ def analysis1(data: dict, out: Path):
     )
     lines += [r"% Summary sentence for thesis body:", f"% {sentence}", ""]
 
-    path = out / "stat_permutation_test.tex"
+    path = out / f"stat_permutation_test{exp_tag}.tex"
     path.write_text("\n".join(lines))
     print(f"\n  Saved → {path}")
     print(f"\n  Summary sentence:\n  {sentence}")
@@ -249,16 +249,21 @@ def run_bootstrap_ci(
         f1s[i] = f1_score(yt_b, yp_b, average="macro")
         if y_prob is not None:
             try:
-                aucs[i] = roc_auc_score(yt_b, y_prob[idx])
+                if y_prob.ndim == 2:   # multi-class: full prob matrix
+                    aucs[i] = roc_auc_score(
+                        yt_b, y_prob[idx],
+                        multi_class="ovr", average="macro")
+                else:                  # binary: class-1 probability column
+                    aucs[i] = roc_auc_score(yt_b, y_prob[idx])
             except ValueError:
-                aucs[i] = np.nan
+                pass
 
     f1_lo,  f1_hi  = np.percentile(f1s, [2.5, 97.5])
     auc_lo, auc_hi = np.nanpercentile(aucs, [2.5, 97.5])
     return float(f1_lo), float(f1_hi), float(auc_lo), float(auc_hi)
 
 
-def analysis2(data: dict, out: Path):
+def analysis2(data: dict, out: Path, exp_tag: str = ""):
     print("\n── Analysis 2: Bootstrap confidence intervals ───────────────────")
 
     lines = [
@@ -294,7 +299,7 @@ def analysis2(data: dict, out: Path):
         )
 
     lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}", ""]
-    path = out / "stat_bootstrap_ci.tex"
+    path = out / f"stat_bootstrap_ci{exp_tag}.tex"
     path.write_text("\n".join(lines))
     print(f"\n  Saved → {path}")
 
@@ -322,7 +327,7 @@ def run_mcnemar(
     return b, c, float(chi2), pval
 
 
-def analysis3(data: dict, out: Path):
+def analysis3(data: dict, out: Path, exp_tag: str = ""):
     print("\n── Analysis 3: McNemar's tests ─────────────────────────────────")
 
     results = []
@@ -398,11 +403,11 @@ def analysis3(data: dict, out: Path):
 
     lines += ["", r"% ── Prose paragraph for thesis Results section ──",
               prose, ""]
-    path = out / "stat_mcnemar.tex"
+    path = out / f"stat_mcnemar{exp_tag}.tex"
     path.write_text("\n".join(lines))
     print(f"\n  Saved → {path}")
 
-    prose_path = out / "stat_mcnemar_prose.tex"
+    prose_path = out / f"stat_mcnemar_prose{exp_tag}.tex"
     prose_path.write_text(prose + "\n")
     print(f"  Saved → {prose_path}")
 
@@ -413,17 +418,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Statistical tests for Experiment 1 — permutation, bootstrap CI, McNemar"
     )
-    parser.add_argument(
-        "--predictions", required=True,
-        help="Path to exp1_predictions.json",
-    )
-    parser.add_argument(
-        "--output_dir", default=DEFAULT_OUT,
-        help="Directory where .tex files are written (default: thesis_outputs)",
-    )
+    parser.add_argument("--predictions", required=True)
+    parser.add_argument("--output_dir", default=DEFAULT_OUT)
+    parser.add_argument("--exp",   default="1",
+                        help="Experiment number — appended to output filenames")
     parser.add_argument("--n_perm", type=int, default=N_PERM)
     parser.add_argument("--n_boot", type=int, default=N_BOOT)
     args = parser.parse_args()
+    exp_tag = f"_exp{args.exp}"
 
     pred_path = Path(args.predictions)
     out_dir   = Path(args.output_dir)
@@ -440,9 +442,10 @@ def main():
     print(f"Found {len(keys)} prediction arrays: {keys}")
     print(f"y_true length: {len(data.get('y_true', []))}")
 
-    analysis1(data, out_dir)
-    analysis2(data, out_dir)
-    analysis3(data, out_dir)
+    analysis1(data, out_dir, exp_tag=exp_tag)
+    analysis2(data, out_dir, exp_tag=exp_tag)
+    analysis3(data, out_dir, exp_tag=exp_tag)
+    print(f"\n  All tables → {out_dir}")
 
     print(f"\n{'═'*62}")
     print(f"  All tables written to: {out_dir}")
