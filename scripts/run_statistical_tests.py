@@ -159,8 +159,8 @@ def analysis1(data: dict, out: Path, exp_tag: str = ""):
     insig = []
 
     for name, pred_key, _, _ in MODELS:
-        if pred_key not in data:
-            print(f"  {name}: PENDING (key '{pred_key}' not found)")
+        if pred_key not in data or len(data[pred_key]) == 0:
+            print(f"  {name}: PENDING")
             rows.append(None)
             continue
         obs, nmean, nstd, pval = run_permutation_test(
@@ -281,7 +281,7 @@ def analysis2(data: dict, out: Path, exp_tag: str = ""):
     ]
 
     for name, pred_key, prob_key, _ in MODELS:
-        if pred_key not in data:
+        if pred_key not in data or len(data[pred_key]) == 0:
             lines.append(
                 f"  {lname(name)} & \\textit{{pending}} & \\textit{{pending}} \\\\"
             )
@@ -332,7 +332,8 @@ def analysis3(data: dict, out: Path, exp_tag: str = ""):
 
     results = []
     for la, ka, lb, kb in MCNEMAR_PAIRS:
-        if ka not in data or kb not in data:
+        if (ka not in data or len(data[ka]) == 0 or
+                kb not in data or len(data[kb]) == 0):
             print(f"  {la} vs {lb}: PENDING (missing predictions)")
             results.append(None)
             continue
