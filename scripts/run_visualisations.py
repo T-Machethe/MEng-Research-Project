@@ -46,6 +46,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
+from scipy import stats as _sp_stats
+from sklearn.metrics import f1_score as _f1, roc_auc_score as _auc
 
 warnings.filterwarnings("ignore")
 
@@ -84,6 +86,34 @@ ABL_TITLE_MAP = {
     "loss":   "XLS-R Loss Function Ablation — Experiment 1",
     "decay":  "XLS-R LR Decay Factor Ablation — Experiment 1",
 }
+
+# ── Statistical figure palette & config ───────────────────────────────────────
+STAT_SEED  = 42
+STAT_PERM  = 10_000
+STAT_BOOT  = 10_000
+OBS_CLR    = "#E53935"    # observed F1 line in permutation histograms
+STAT_CI    = ACCENT       # CI whiskers in forest plot
+STAT_B     = SCRATCH_W2V  # b bars in McNemar chart (model A wins)
+STAT_C     = FINETUNE_W2V # c bars in McNemar chart (model B wins)
+
+STAT_MODELS = [
+    ("wav2vec2-scratch",   "y_pred_w2v2_scratch",  "y_prob_w2v2_scratch"),
+    ("WavLM-scratch",      "y_pred_wavlm_scratch", "y_prob_wavlm_scratch"),
+    ("XLS-R-scratch",      "y_pred_xlsr_scratch",  "y_prob_xlsr_scratch"),
+    ("wav2vec2-FT (MLP)",  "y_pred_w2v2_ft",       "y_prob_w2v2_ft"),
+    ("WavLM-FT (MLP)",     "y_pred_wavlm_ft",      "y_prob_wavlm_ft"),
+    ("XLS-R-FT (MLP)",     "y_pred_xlsr_ft",       "y_prob_xlsr_ft"),
+    ("wav2vec2-FT (SVM)",  "y_pred_w2v2_svm",      "y_prob_w2v2_svm"),
+    ("WavLM-FT (SVM)",     "y_pred_wavlm_svm",     "y_prob_wavlm_svm"),
+    ("XLS-R-FT (SVM)",     "y_pred_xlsr_svm",      "y_prob_xlsr_svm"),
+]
+
+STAT_PAIRS = [
+    ("wav2vec2-scratch", "y_pred_w2v2_scratch", "XLS-R-FT (MLP)",  "y_pred_xlsr_ft"),
+    ("wav2vec2-scratch", "y_pred_w2v2_scratch", "WavLM-scratch",   "y_pred_wavlm_scratch"),
+    ("XLS-R-FT (MLP)",  "y_pred_xlsr_ft",       "WavLM-FT (MLP)", "y_pred_wavlm_ft"),
+    ("XLS-R-FT (SVM)",  "y_pred_xlsr_svm",      "wav2vec2-scratch","y_pred_w2v2_scratch"),
+]
 
 CMAP_DIV = LinearSegmentedColormap.from_list(
     "crs", ["#C62828","#FFECB3","#1B5E20"], N=256)
@@ -197,7 +227,61 @@ def savefig_abl(fig, out: Path, name: str):
                 facecolor="#f8f9fa", dpi=180)
     plt.close(fig)
     print(f"  Saved → {name}")
-    
+
+# ── Statistical analysis helpers ───────────────────────────────────────────────
+
+def _perm_test(y_true, y_pred, n=STAT_PERM, seed=STAT_SEED):
+    """One-sided permutation test on macro-F1. Returns (obs, null_mean, null_std, p)."""
+    rng  = np.random.RandomState(seed)
+    obs  = _f1(y_true, y_pred, average="macro")
+    null = np.array([_f1(y_true, rng.permutation(y_pred), average="macro")
+                     for _ in range(n)])
+    return float(obs), float(null.mean()), float(null.std()), float((null >= obs).mean())
+
+
+def _boot_ci(y_true, y_pred, y_prob, n=STAT_BOOT, seed=STAT_SEED):
+    """
+    Bootstrap 95% CI for macro-F1 and AUC.
+    y_prob may be None, empty, 1-D (binary class-1 prob), or 2-D (multi-class).
+    Returns (f1_lo, f1_hi, auc_lo, auc_hi).
+    """
+    rng  = np.random.RandomState(seed)
+    sz   = len(y_true)
+    f1s  = np.empty(n)
+    aucs = np.full(n, np.nan)
+
+    has_prob = (y_prob is not None and len(y_prob) > 0)
+    is_multi = (has_prob and np.asarray(y_prob).ndim == 2)
+
+    for i in range(n):
+        idx    = rng.choice(sz, sz, replace=True)
+        f1s[i] = _f1(y_true[idx], y_pred[idx], average="macro")
+        if has_prob:
+            try:
+                yp_b = np.asarray(y_prob)[idx]
+                if is_multi:
+                    aucs[i] = _auc(y_true[idx], yp_b,
+                                   multi_class="ovr", average="macro")
+                else:
+                    aucs[i] = _auc(y_true[idx], yp_b)
+            except ValueError:
+                pass
+
+    f1l, f1h   = np.percentile(f1s, [2.5, 97.5])
+    al,  ah    = np.nanpercentile(aucs, [2.5, 97.5])
+    return float(f1l), float(f1h), float(al), float(ah)
+
+
+def _mcnemar(y_true, y_pred_a, y_pred_b):
+    """Continuity-corrected McNemar's test. Returns (b, c, chi2, p)."""
+    ca = y_pred_a == y_true
+    cb = y_pred_b == y_true
+    b  = int(np.sum( ca & ~cb))
+    c  = int(np.sum(~ca &  cb))
+    if b + c == 0:
+        return b, c, 0.0, 1.0
+    chi2 = (abs(b - c) - 1) ** 2 / (b + c)
+    return b, c, float(chi2), float(1 - _sp_stats.chi2.cdf(chi2, df=1))    
     
 # ══════════════════════════════════════════════════════════════════════════════
 # Figure 1 — Cross-experiment macro-F1 heatmap
@@ -1448,6 +1532,201 @@ def fig_synthesis_winner_map(all_data: dict, out: Path):
                 bbox_inches="tight", facecolor=BG, dpi=200)
     plt.close(fig)
     print("  Saved → 20. Thesis_fig_synthesis_winner_map")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 21 — Permutation test null distributions  (Experiment 1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_stat_permutation(pred_data: dict, out: Path):
+    """
+    3×3 small-multiple histograms: null F1 distribution per model.
+    Observed F1 marked in red. Pending / collapsed models show placeholder.
+    """
+    y_true  = np.array(pred_data["y_true"])
+    ncols   = 3
+    nrows   = (len(STAT_MODELS) + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols,
+                             figsize=(14, 3.2 * nrows), facecolor=BG)
+    fig.suptitle(
+        f"Permutation Test Null Distributions — Experiment 1\n"
+        f"({STAT_PERM:,} permutations; red line = observed F1)",
+        fontsize=11, fontweight="bold", color=ACCENT, y=1.01)
+
+    rng = np.random.RandomState(STAT_SEED)
+
+    for idx, (name, pk, _) in enumerate(STAT_MODELS):
+        ax = axes.flatten()[idx]
+        ax.set_facecolor(PANEL)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        yp = np.array(pred_data.get(pk, []))
+        if len(yp) == 0:
+            ax.text(0.5, 0.5, "pending", ha="center", va="center",
+                    transform=ax.transAxes, color=CHANCE_COLOR, fontsize=11)
+            ax.set_title(name, fontsize=9, color=TEXT)
+            continue
+
+        obs  = _f1(y_true, yp, average="macro")
+        null = np.array([_f1(y_true, rng.permutation(yp), average="macro")
+                         for _ in range(STAT_PERM)])
+        pv   = float((null >= obs).mean())
+        pstr = "$p < 0.001$" if pv < 0.001 else f"$p = {pv:.3f}$"
+
+        ax.hist(null, bins=40, color=ABL_MLP, alpha=0.80,
+                edgecolor="white", zorder=2)
+        ax.axvline(obs, color=OBS_CLR, linewidth=2.0, zorder=3)
+        ax.set_title(f"{name}\nobs={obs:.3f}  {pstr}",
+                     fontsize=8.5, color=TEXT, pad=4)
+        ax.set_xlabel("Null F1", fontsize=8, color=TEXT)
+        ax.set_ylabel("Count",   fontsize=8, color=TEXT)
+        ax.tick_params(labelsize=7)
+
+    for ax in axes.flatten()[len(STAT_MODELS):]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    savefig(fig, out, "21. Thesis_fig_stat_permutation")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 22 — Bootstrap CI forest plot  (Experiment 1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_stat_bootstrap_ci(pred_data: dict, out: Path):
+    """
+    Horizontal forest plot: F1 (left) and AUC (right) with 95% bootstrap CIs.
+    Collapsed models (empty y_prob) show AUC as N/A.
+    """
+    y_true = np.array(pred_data["y_true"])
+    names  = [m[0] for m in STAT_MODELS]
+
+    f1_obs,  f1_lo,  f1_hi  = [], [], []
+    auc_obs, auc_lo, auc_hi = [], [], []
+
+    for name, pk, prob_k in STAT_MODELS:
+        yp = np.array(pred_data.get(pk, []))
+        if len(yp) == 0:
+            for lst in (f1_obs, f1_lo, f1_hi, auc_obs, auc_lo, auc_hi):
+                lst.append(None)
+            continue
+        yprob_raw = pred_data.get(prob_k, [])
+        yprob     = np.array(yprob_raw) if len(yprob_raw) > 0 else None
+        f1_obs.append(float(_f1(y_true, yp, average="macro")))
+        fl, fh, al, ah = _boot_ci(y_true, yp, yprob)
+        f1_lo.append(fl); f1_hi.append(fh)
+        try:
+            if yprob is not None and len(yprob) > 0:
+                auc_obs.append(
+                    float(_auc(y_true, yprob, multi_class="ovr", average="macro"))
+                    if yprob.ndim == 2
+                    else float(_auc(y_true, yprob))
+                )
+            else:
+                auc_obs.append(None)
+        except Exception:
+            auc_obs.append(None)
+        auc_lo.append(al if not np.isnan(al) else None)
+        auc_hi.append(ah if not np.isnan(ah) else None)
+
+    y_pos = np.arange(len(names))
+    fig, (ax_f1, ax_auc) = plt.subplots(1, 2, figsize=(13, 5.5),
+                                         facecolor=BG, sharey=True)
+    fig.suptitle("Bootstrap 95% Confidence Intervals — Experiment 1",
+                 fontsize=11, fontweight="bold", color=ACCENT)
+
+    for ax, obs_l, lo_l, hi_l, xlabel in [
+        (ax_f1,  f1_obs,  f1_lo,  f1_hi,  "Test F1 (macro)"),
+        (ax_auc, auc_obs, auc_lo, auc_hi, "Test AUC"),
+    ]:
+        ax.set_facecolor(PANEL)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, axis="x", alpha=0.25, zorder=1)
+        ax.axvline(0.500, color=CHANCE_COLOR, linestyle="--",
+                   linewidth=1.0, alpha=0.7)
+        ax.text(0.500, len(names) - 0.3, "chance", color=CHANCE_COLOR,
+                fontsize=7.5, ha="center")
+
+        for i, (obs, lo, hi) in enumerate(zip(obs_l, lo_l, hi_l)):
+            if obs is None:
+                ax.text(0.02, i, "pending / N/A", va="center",
+                        color=CHANCE_COLOR, fontsize=8,
+                        transform=ax.get_yaxis_transform())
+                continue
+            ax.plot([lo, hi], [i, i], color=STAT_CI, linewidth=2.0, zorder=3)
+            ax.plot([lo, lo], [i-0.12, i+0.12], color=STAT_CI, linewidth=2.0)
+            ax.plot([hi, hi], [i-0.12, i+0.12], color=STAT_CI, linewidth=2.0)
+            ax.scatter([obs], [i], color=STAT_CI, s=50, zorder=4)
+            ax.text(hi + 0.005, i, f"{obs:.3f}", va="center",
+                    fontsize=7.5, color=TEXT)
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(names, fontsize=9)
+        ax.invert_yaxis()
+        ax.set_xlabel(xlabel, fontsize=10, color=TEXT)
+
+    plt.tight_layout()
+    savefig(fig, out, "22. Thesis_fig_stat_bootstrap_ci")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Figure 23 — McNemar discordance bar chart  (Experiment 1)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fig_stat_mcnemar(pred_data: dict, out: Path):
+    """
+    Grouped horizontal bar chart: b and c discordant segment counts per pair.
+    Annotated with significance stars and p-values.
+    """
+    y_true = np.array(pred_data["y_true"])
+    pair_labels, b_vals, c_vals, pvals = [], [], [], []
+
+    for la, ka, lb, kb in STAT_PAIRS:
+        pair_labels.append(f"{la}\nvs {lb}")
+        ya = np.array(pred_data.get(ka, []))
+        yb = np.array(pred_data.get(kb, []))
+        if len(ya) == 0 or len(yb) == 0:
+            b_vals.append(0); c_vals.append(0); pvals.append(None)
+            continue
+        b, c, _, pv = _mcnemar(y_true, ya, yb)
+        b_vals.append(b); c_vals.append(c); pvals.append(pv)
+
+    n   = len(pair_labels)
+    fig, ax = plt.subplots(figsize=(11, 2.6 * n), facecolor=BG)
+    ax.set_facecolor(PANEL)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(True, axis="x", alpha=0.25, zorder=1)
+
+    bar_h = 0.32
+    y_pos = np.arange(n)
+
+    for i, (b, c, pv) in enumerate(zip(b_vals, c_vals, pvals)):
+        ax.barh(y_pos[i] - bar_h/2, b, bar_h, color=STAT_B, alpha=0.85,
+                label="$b$: A correct, B wrong" if i == 0 else "")
+        ax.barh(y_pos[i] + bar_h/2, c, bar_h, color=STAT_C, alpha=0.85,
+                label="$c$: A wrong, B correct" if i == 0 else "")
+        if pv is None:
+            ax.text(5, y_pos[i], "pending", va="center",
+                    color=CHANCE_COLOR, fontsize=8)
+        else:
+            stars = ("***" if pv < 0.001 else "**" if pv < 0.01
+                     else "*" if pv < 0.05 else "ns")
+            pstr  = "$p < 0.001$" if pv < 0.001 else f"$p = {pv:.3f}$"
+            ax.text(max(b, c) + 8, y_pos[i], f"{stars}  {pstr}",
+                    va="center", fontsize=9, color=TEXT)
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(pair_labels, fontsize=9)
+    ax.invert_yaxis()
+    ax.set_xlabel("Number of discordant segments", fontsize=10, color=TEXT)
+    ax.set_title("McNemar Discordant Segments — Experiment 1",
+                 fontsize=11, fontweight="bold", color=ACCENT, pad=12)
+    ax.legend(loc="lower right", fontsize=9, framealpha=0.9)
+
+    plt.tight_layout()
+    savefig(fig, out, "23. Thesis_fig_stat_mcnemar")
     
 # ══════════════════════════════════════════════════════════════════════════════
 # Main
@@ -1472,11 +1751,14 @@ FIGURE_MAP = {
     16: ("Ablation: summary comparison",  None),
     19: ("Synthesis strategy lines",      fig_synthesis_strategy_lines),
     20: ("Synthesis winner map",          fig_synthesis_winner_map),
+    21: ("Stat: permutation test",        None),
+    22: ("Stat: bootstrap CI forest",     None),
+    23: ("Stat: McNemar discordance",     None),
 }
 
 
 def run_all(all_data: dict, out: Path, figure: int = 0,
-            ablation_data: dict = None):
+            ablation_data: dict = None, pred_data: dict = None):
     def should_run(n): return figure == 0 or figure == n
 
     if should_run(1):
@@ -1538,6 +1820,22 @@ def run_all(all_data: dict, out: Path, figure: int = 0,
     if should_run(20):
         print("\n── Figure 20: Synthesis winner map ─────────────────────────")
         fig_synthesis_winner_map(all_data, out)
+   
+    if pred_data is None:
+        if any(should_run(n) for n in [21, 22, 23]):
+            print("\n[stat] No exp1_predictions.json loaded — skipping figures 21–23.")
+    else:
+        if should_run(21):
+            print("\n── Figure 21: Permutation test null distributions ───────────")
+            fig_stat_permutation(pred_data, out)
+
+        if should_run(22):
+            print("\n── Figure 22: Bootstrap CI forest plot ──────────────────────")
+            fig_stat_bootstrap_ci(pred_data, out)
+
+        if should_run(23):
+            print("\n── Figure 23: McNemar discordance chart ─────────────────────")
+            fig_stat_mcnemar(pred_data, out)
 
     # ── Ablation figures (13–16) — require ablation_results.json ─────────────
     if ablation_data is None:
@@ -1578,7 +1876,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--figure", type=int, default=0,
-        help="Generate a specific figure only (1-16). 0 = all."
+        help="Generate a specific figure only (1-23, excl. 17-18). 0 = all."
     )
     args   = parser.parse_args()
     res_d  = Path(args.results_dir)
@@ -1603,4 +1901,17 @@ if __name__ == "__main__":
         ablation_data = None
         print("No ablation_results.json found — figures 13–16 will be skipped.")
 
-    run_all(all_data, out_d, figure=args.figure, ablation_data=ablation_data)
+    # Load Experiment 1 predictions JSON if present (figures 21-23)
+    pred_path = res_d / "exp1_predictions.json"
+    if pred_path.exists():
+        with open(pred_path) as f:
+            raw = json.load(f)
+        pred_data = {k: np.array(v) for k, v in raw.items()}
+        n_preds = sum(1 for k in pred_data if k.startswith("y_pred"))
+        print(f"Loaded exp1_predictions.json ({n_preds} prediction arrays)")
+    else:
+        pred_data = None
+        print("No exp1_predictions.json found — figures 21–23 will be skipped.")
+
+    run_all(all_data, out_d, figure=args.figure,
+            ablation_data=ablation_data, pred_data=pred_data)
