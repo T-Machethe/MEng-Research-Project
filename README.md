@@ -353,71 +353,116 @@ The combined PDF report is auto-generated after each `--compare_backbones` run. 
 
 ## Google Colab Workflow
 
-**Cell 1 — GPU and Drive**
+The full research pipeline is run from a single Colab notebook (`MSc_Experiments.ipynb`), organised into 13 stages. Each stage is a markdown header followed by one code cell. Stages are designed to be re-run safely — completed work (segments, checkpoints, results) is detected on Drive and skipped rather than redone.
+
+| # | Stage | Purpose | Runtime |
+|---|---|---|---|
+| 1 | GPU and Drive mount | Confirm GPU, mount Google Drive | seconds |
+| 2 | GitHub Token Authentication | Load PAT from Drive, configure git credential store | seconds |
+| 3 | Clone and/or pull Repo | Clone on first run, hard-reset to `origin/main` on subsequent runs | seconds |
+| 4 | EDA and Diagnostic Plots | Cohort/session/class-balance plots, window-size analysis | ~2 min (`--counts_only`) / ~30 min (full audio scan) |
+| 5 | Preprocessing | WAV → clean `.pt` segments; restores from Drive zip if already processed | ~15–25 min (first run only) |
+| 6 | Patient demographics | Cohort table, per-experiment split table, test-patient profiles → LaTeX | ~15 sec |
+| 7 | Segment Validation | Confirms every experiment (1–5) has usable segments before training starts | seconds |
+| 8 | Main training cell | Runs all 5 experiments × all backbones × both modes, with SVM probe | hours (GPU-dependent) |
+| 9 | Training Results | Reads `results_summary.json` / `backbone_comparison.json`, prints run status and metrics table | seconds |
+| 10 | Ablation Training | Runs one ablation factor group (`freeze` / `loss` / `decay`) per session | ~2.5–4 hrs per factor |
+| 11 | Ablation Results | Aggregates all three factors from `ablation_results.json` → console tables + LaTeX | ~5 sec |
+| 12 | Statistical Tests and results | Builds per-experiment predictions JSON, runs permutation / bootstrap / McNemar tests → `.tex` | seconds–minutes |
+| 13 | Thesis Figures | Generates all programmatic figures (main results, appendix, ablation, synthesis) | ~3–4 min |
+
+### 1 — GPU and Drive mount
 ```python
 import torch
 from google.colab import drive
-print(torch.cuda.get_device_name(0))
-drive.mount('/content/drive')
+
+print(f"GPU available: {torch.cuda.is_available()}")
+print(f"GPU name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None'}")
+drive.mount('/content/drive', force_remount=True)
 ```
 
-**Cell 2 — GitHub credentials**
+### 2 — GitHub Token Authentication
 ```python
 with open("/content/drive/MyDrive/secrets/github_token.txt") as f:
     TOKEN = f.read().strip()
-import subprocess
-subprocess.run(["git", "config", "--global", "credential.helper", "store"])
+
+!git config --global credential.helper store
 with open("/root/.git-credentials", "w") as f:
     f.write(f"https://{TOKEN}:x-oauth-basic@github.com\n")
+!chmod 600 /root/.git-credentials
 ```
 
-**Cell 3 — Clone or sync repo**
+### 3 — Clone and/or pull Repo
 ```python
 import os
+
 PROJECT_ROOT = "/content/project"
+REPO_URL = "https://github.com/T-Machethe/MEng-Research-Project.git"
+
 if not os.path.exists(PROJECT_ROOT):
-    os.system(f"git clone https://github.com/T-Machethe/MEng-Research-Project.git {PROJECT_ROOT}")
+    !git clone {REPO_URL} {PROJECT_ROOT}
 else:
-    os.chdir(PROJECT_ROOT)
-    os.system("git fetch --all && git reset --hard origin/main && git clean -fd")
-os.chdir(PROJECT_ROOT)
+    %cd {PROJECT_ROOT}
+    !git fetch --all
+    !git reset --hard origin/main
+    !git clean -fd
+
+%cd {PROJECT_ROOT}
 ```
 
-**Cell 4 — Training (all experiments, all backbones)**
+### 4 — EDA and Diagnostic Plots
+Runs `run_exploratory_DA.py` (structure plots, optionally a full audio scan) and `run_diagnostic_pipeline.py --section b` (window-size / segment-yield analysis). Output goes to `MSc_Sinusitis_results/Plots and visuals/{eda,diagnostics}`.
 ```python
-import sys, subprocess
-from pathlib import Path
+run("run_exploratory_DA.py", "--counts_only --csv_path '...' --data_root '...' --output_dir '...'")
+run("run_diagnostic_pipeline.py", "--section b --csv_path '...' --data_root '...' --output_dir '...'")
+```
 
-OUTPUT_DIR = "/content/drive/MyDrive/MSc_Sinusitis_results"
-CSV_PATH   = "/content/drive/MyDrive/Data/data_final/Clinical/clinical_all_sessions.csv"
+### 5 — Preprocessing
+Checks the runtime, then a Drive zip, before falling back to `process_from_csv(...)` on raw WAV files. Successful runs are re-zipped to `/content/drive/MyDrive/clean_audio_3s.zip` so future sessions skip extraction entirely. Ends with a segment-length sanity check (must exceed 3s worth of frames for the transformer kernel width, see [Why 1 Second — Not 3.072 Seconds](#why-1-second--not-3072-seconds)).
 
+### 6 — Patient demographics
+Produces three tables — overall cohort (n, age, gender per surgical group), split breakdown (train/val/test per experiment), and individual test-patient profiles with experiment coverage. Tables 1 and 2 are written as LaTeX to `thesis_outputs/patient_demographics.tex`.
+
+### 7 — Segment Validation
+Indexes all `.pt` files by `(patient_id, session, audio_column)` and checks each of the five experiments has both classes/groups present with usable segment counts. **A ✓ on every experiment is required before running Stage 8.**
+
+### 8 — Main training cell
+```python
 cmd = [
     sys.executable, "scripts/run_experiment.py",
-    "--exp",                "all",
-    "--compare_backbones",
-    "--num_epochs",         "20",
-    "--batch_size",         "8",
-    "--imbalance",          "weights",
-    "--warmup_steps",       "200",
-    "--learning_rate",      "1e-5",
-    "--layerwise_lr_decay", "0.8",
-    "--label_smoothing",    "0.1",
-    "--head_warmup_epochs", "1",
-    "--early_stop_metric",  "val_f1",
-    "--early_stop_patience","3",
-    "--freeze_layers",      "4",
-    "--focal_gamma",        "2.0",
-    "--save_every",         "5",
-    "--keep_last_n",        "2",
-    "--use_svm",
-    "--segment_dir",        "/content/clean_audio_3s",
-    "--csv_path",           CSV_PATH,
-    "--output_dir",         OUTPUT_DIR,
+    "--exp", "all", "--compare_backbones",
+    "--num_epochs", "30", "--batch_size", "8",
+    "--imbalance", "weights", "--warmup_steps", "200",
+    "--learning_rate", "1e-5", "--layerwise_lr_decay", "0.8",
+    "--label_smoothing", "0.1", "--head_warmup_epochs", "1",
+    "--early_stop_metric", "val_f1", "--early_stop_patience", "5",
+    "--freeze_layers", "4", "--focal_gamma", "2.0",
+    "--save_every", "5", "--keep_last_n", "2", "--use_svm",
+    "--segment_dir", "/content/clean_audio_3s",
+    "--csv_path", CSV_PATH, "--output_dir", OUTPUT_DIR,
 ]
-subprocess.run(cmd, cwd="/content/project")
 ```
+Streamed via `subprocess.Popen` with HuggingFace load-noise suppressed and a `tqdm` bar for backbone weight loading. Already-completed runs are automatically skipped — re-running is safe and will only execute missing or incomplete experiments.
 
-Already-completed runs are automatically skipped — re-running is safe and will only execute missing or incomplete experiments.
+### 9 — Training Results
+Walks every `expN_backbone_comparison/{run}/results_summary.json`, reporting status (`NOT STARTED` / `PARTIAL` / `COMPLETE`), checkpoint epoch, and test/val accuracy, F1, AUC (plus SVM metrics for finetune runs). Also prints a condensed summary straight from each experiment's `backbone_comparison.json`.
+
+### 10 — Ablation Training
+```python
+ABLATION_FACTOR = "all"   # or "freeze" / "loss" / "decay"
+# python scripts/run_ablation.py --run --factor {ABLATION_FACTOR} \
+#     --segment_dir ... --csv_path ... --output_dir ... --num_epochs 8
+```
+Run one factor group per Colab session (`freeze` ≈ 4 hrs / 6 variants, `loss` and `decay` ≈ 2.5 hrs / 4 variants each). Progress accumulates in `ablation_results.json`; completed variants are skipped automatically on re-run.
+
+### 11 — Ablation Results
+Run only after `freeze`, `loss`, and `decay` have all completed. Reads `ablation_results.json`, prints console tables, and writes `thesis_outputs/ablation_tables.tex`.
+
+### 12 — Statistical Tests and results
+For each of the five experiments: builds a `expN_predictions.json` from `backbone_comparison.json` (with a fallback to individual `results_summary.json` files and full-collapse detection for degenerate runs), then runs `run_statistical_tests.py` — permutation tests, bootstrap CIs, and McNemar's tests — writing four `.tex` files per experiment (`stat_permutation_test`, `stat_bootstrap_ci`, `stat_mcnemar`, `stat_mcnemar_prose`) plus a `stat_manifest.json` summary.
+
+### 13 — Thesis Figures
+Verifies which `backbone_comparison.json` files and the ablation results are available, then runs `run_visualisations.py` to generate all programmatic figures (main results, appendix, ablation, cross-experiment synthesis) to `MSc_Sinusitis_results/Thesis_Figures/`. A single figure can be regenerated with `--figure N` after updating results.
 
 ---
 
