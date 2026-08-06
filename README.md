@@ -172,29 +172,55 @@ On subsequent Colab sessions, restore from the saved zip on Drive instead of re-
 
 ---
 
-## Five Experiments
+## Primary Experiments (thesis-relevant)
 
 All experiments enforce patient-level splitting with a hard assertion — no patient appears in more than one split.
 
 | Exp | Clinical question | Task | Groups |
 |---|---|---|---|
-| **Exp 1** | Can we distinguish CRS from healthy controls acoustically? | Binary | FESS vs Control |
-| **Exp 2** | Does session confound dominate the acoustic signal? | Binary | Pre-op vs post-op (session confound) |
-| **Exp 3** | Can we track three stages of recovery from voice alone? | 3-class | Session 1 / 2 / 3 |
-| **Exp 4** | Can we detect within-patient change without speaker identity? | Paired binary | Pre/post segment pairs, same patient |
-| **Exp 5** | Do CRS-trained features generalise across surgical groups? | Binary cross-domain | Train: FESS — Test: Septoplasty + Tonsillectomy |
+| **Exp 1** | Can we distinguish CRS from healthy controls acoustically, and does pretraining help? | Binary | FESS (Session 1) vs Control (Session 1) |
+| **Exp 5** | Does the fixed Exp1 classifier's signal look CRS-specific, or does it also fire on other post-surgical cohorts? | Cross-cohort specificity (no retraining) | Fixed Exp1 checkpoints applied to Septoplasty + Tonsillectomy (Session 1) |
 
-### Exp 4 — Paired Change Detection
+### Exp 1 — CRS vs Control (updated per examiner feedback)
+
+Restricted to **Session 1 for both FESS and Control**. Sessions 2/3 were previously available to Control without a session filter and are now explicitly excluded for both arms — comparing groups at a single, comparable (pre-treatment) timepoint isolates the CRS-vs-healthy signal from post-operative change, recovery, or session-to-session recording differences.
+
+### Exp 5 — Cross-cohort specificity analysis (reframed per examiner feedback)
+
+**No longer a trainable experiment.** The previous version trained a new model on a session-based pre/post label — that only shows sessions are acoustically distinguishable, not that the Exp1 CRS classifier generalises. The current version takes each of the six already-trained, frozen Exp1 checkpoints (3 backbones × scratch/finetune) and applies them, unmodified, to Session 1 recordings from Septoplasty and Tonsillectomy. It reports what fraction of each cohort the fixed classifier still flags as CRS — evidence for (or against) the classifier picking up a CRS-specific signal rather than a generic post-surgical/upper-airway signature.
+
+Septoplasty and Tonsillectomy are surgical cohorts, not confirmed non-CRS diagnoses at the per-patient level — see `scripts/run_cross_cohort_specificity.py` docstring for the CRS-status caveat and the optional diagnosis cross-check.
+
+See `scripts/run_cross_cohort_specificity.py`.
+
+### Patient-level metrics (Exp1 and Exp5)
+
+Every metric produced during training (`Trainer._evaluate()`) is pooled over **segments**, not patients — a patient with 30 segments counts 30× toward test accuracy, and segments from the same patient aren't independent samples, so segment-level accuracy tends to look more optimistic than the clinically meaningful "fraction of patients correctly classified."
+
+- **Exp5** (`run_cross_cohort_specificity.py`) computes patient-level metrics directly — it was built patient-level from the start, since segment-level "flagged as CRS" wouldn't mean anything for a cross-cohort specificity claim.
+- **Exp1** now has patient-level test metrics in two forms:
+  - `scripts/run_patient_level_aggregation.py` — a **retroactive, no-retraining** script that reconstructs patient identity from segment filenames and reuses each backbone's already-saved `results_summary.json`. Use this for the six Exp1 backbones that are already trained.
+  - `src/experiments/base.py::BaseExperiment._add_patient_level_test_metrics()` — computes the same thing inline for any future Exp1 (re)run, so new `results_summary.json` files carry `test/patient_level/*` keys automatically (this is also what `run_cross_cohort_specificity.py` reads for its Exp1-baseline comparison).
+
+Both use the same aggregation logic (`src/training/patient_metrics.py`, shared by Exp1 and Exp5): mean predicted P(CRS) across a patient's segments, not majority vote — consistent with the convention used in `lund_mackay_correlation.py`.
+
+## Legacy / Exploratory Experiments (not part of the primary thesis claim)
+
+Per examiner feedback, Experiments 2, 3, and 4 introduce new classification tasks with different target labels rather than testing the Exp1 CRS classifier, so results from them should not be read as evidence about CRS detection itself. They are retained in the codebase for completeness and because they were already run, but are no longer part of the primary research narrative.
+
+| Exp | Clinical question | Task | Groups | Status |
+|---|---|---|---|---|
+| **Exp 2** | Does session confound dominate the acoustic signal? | Binary | Pre-op vs post-op (session confound) | Legacy — trains a new session classifier, doesn't test Exp1 |
+| **Exp 3** | Can we track three stages of recovery from voice alone? | 3-class | Session 1 / 2 / 3 | Legacy — new task, new labels |
+| **Exp 4** | Can we detect within-patient change without speaker identity? | Paired binary | Pre/post segment pairs, same patient | Legacy — new task, new labels |
+
+### Exp 4 — Paired Change Detection (legacy)
 
 Eliminates the speaker identity confound by training on pre/post pairs from the same patient. The model detects acoustic change without using voice identity as a shortcut.
 
 **Positive pairs (label 1):** pre-op segment + post-op segment, same patient  
 **Negative pairs (label 0):** two segments within the same recording session  
 **Class balance:** `neg_ratio=2.0` produces approximately 33% positive / 67% negative pairs
-
-### Exp 5 — Generalisation
-
-The most scientifically honest experiment. No patient overlap between train and test populations by design. Results from Exp 5 provide the most reliable indication of whether the model has learned genuine CRS-related acoustic features rather than speaker identity or recording artefacts.
 
 ---
 
