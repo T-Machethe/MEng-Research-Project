@@ -37,12 +37,29 @@ class Exp1CRSvsControl(BaseExperiment):
     Clinical question
     ─────────────────
     Does voice contain a detectable disease signal that distinguishes
-    Chronic Rhinosinusitis from a healthy larynx?
+    Chronic Rhinosinusitis from a healthy larynx, and does pretraining
+    improve a model's ability to detect it?
 
     Data
     ────
-    FESS Session 1  →  Class 1 (CRS, confirmed pre-surgery)
-    Control group   →  Class 0 (Healthy baseline)
+    FESS   Session 1  →  Class 1 (CRS, confirmed pre-surgery)
+    Contr  Session 1  →  Class 0 (Healthy baseline)
+
+    Examiner feedback (addressed here)
+    ───────────────────────────────────
+    Both cohorts are now restricted to Session 1 only. Sessions 2/3 are
+    NOT included for either group in this experiment: they were collected
+    after a surgical intervention (FESS) and may reflect post-operative
+    change, recovery, or session-to-session recording differences rather
+    than the CRS-vs-healthy contrast this experiment is meant to isolate.
+    Restricting both arms to Session 1 keeps the comparison "clean": both
+    cohorts are recorded under the same (pre-treatment) clinical timepoint,
+    so any residual acoustic difference is attributable to CRS status
+    rather than to *when* the recording was taken.
+    (Sessions 2/3 remain available to a separate, explicitly-scoped
+    analysis with its own clinical justification — see Exp2/Exp3, which
+    are retained as exploratory/legacy analyses outside the primary
+    CRS-detection claim.)
 
     Risks and mitigations
     ─────────────────────
@@ -65,16 +82,38 @@ class Exp1CRSvsControl(BaseExperiment):
     @property
     def description(self) -> str:
         return (
-            "Binary classification: CRS (FESS Session 1) vs Healthy (Control).\n"
-            "Establishes whether voice contains a detectable sinusitis signal."
+            "Binary classification: CRS (FESS Session 1) vs Healthy "
+            "(Control Session 1).\n"
+            "Establishes whether voice contains a detectable sinusitis "
+            "signal, using recordings from a single, comparable timepoint "
+            "for both cohorts."
         )
 
     def prepare_data(self):
         df = self.load_csv()
 
-        # ── Filter to relevant groups and sessions ─────────────────────────
-        fess_s1 = df[(df["GROUP"] == "FESS") & (df["session"] == 1)].copy()
-        control = df[df["GROUP"] == "Contr"].copy()
+        # ── Filter to relevant groups AND Session 1 only, for BOTH arms ─────
+        # (Examiner feedback: comparable pre-treatment conditions only —
+        #  Sessions 2/3 excluded from both FESS and Control here.)
+        fess_s1  = df[(df["GROUP"] == "FESS")  & (df["session"] == 1)].copy()
+        control  = df[df["GROUP"] == "Contr"].copy()
+
+        # Defensive check: if Control ever carries multiple sessions, make
+        # the exclusion explicit and auditable rather than silently
+        # including/excluding rows. Session 1 is always kept; anything else
+        # is dropped and logged so it shows up in the run log / thesis
+        # methods appendix.
+        if "session" in control.columns:
+            control_other_sessions = control[control["session"] != 1]
+            if len(control_other_sessions) > 0:
+                log.warning(
+                    f"\n  [Exp1] Control group has "
+                    f"{len(control_other_sessions)} row(s) with session != 1 "
+                    f"({control_other_sessions['ID'].nunique()} patient(s)). "
+                    f"These are EXCLUDED per examiner feedback — Exp1 uses "
+                    f"Session 1 only for both FESS and Control."
+                )
+            control = control[control["session"] == 1].copy()
 
         fess_s1["label"] = 1   # CRS
         control["label"] = 0   # Healthy
@@ -82,10 +121,19 @@ class Exp1CRSvsControl(BaseExperiment):
         combined = pd.concat([fess_s1, control], ignore_index=True)
         combined = combined.dropna(subset=["label"])
 
+        # Hard assertion: every row entering this experiment must be
+        # Session 1. This turns a silent data-leakage-of-timepoint bug into
+        # an immediate, loud failure instead of a subtle confound.
+        assert (combined["session"] == 1).all(), (
+            "Exp1CRSvsControl: found non-Session-1 rows after filtering — "
+            "both FESS and Control must be Session 1 only per examiner "
+            "feedback."
+        )
+
         label_fn: Callable = lambda row: int(row["label"])
 
         # ── Log raw class distribution ─────────────────────────────────────
-        log.info("\n  [Exp1] Raw class distribution (before split):")
+        log.info("\n  [Exp1] Raw class distribution (before split, Session 1 only):")
         self.log_class_distribution(combined, label_fn, "all data")
 
         # ── Patient-level split stratified by GROUP ─────────────────────────
@@ -384,6 +432,28 @@ class Exp4PairedChange(BaseExperiment):
 
 class Exp5Generalisation(BaseExperiment):
     """
+    ⚠ DEPRECATED per examiner feedback — retained only for historical
+    reproducibility of earlier results, no longer part of the primary
+    thesis narrative.
+
+    Why deprecated
+    ──────────────
+    This class TRAINS A NEW MODEL from scratch on FESS (using a
+    session-based pre/post label, not a CRS label) and evaluates it on
+    Septoplasty/Tonsillectomy. The examiner's objection: this only shows
+    whether the *sessions* are acoustically distinguishable in a new
+    classifier — it says nothing about whether the Exp1 CRS classifier's
+    signal generalises across cohorts, because it isn't the same
+    classifier and isn't the same label.
+
+    Use `scripts/run_cross_cohort_specificity.py` instead. It takes the
+    FIXED, already-trained Exp1 checkpoints (CRS vs Control, Session 1)
+    and applies them — with no retraining — to Session 1 recordings from
+    Septoplasty and Tonsillectomy, framed as a cross-cohort specificity
+    analysis rather than a new disease-classification experiment.
+
+    Original docstring (kept for context)
+    ──────────────────────────────────────
     Out-of-distribution evaluation: Train on FESS, Test on other groups.
 
     Clinical question
@@ -430,6 +500,13 @@ class Exp5Generalisation(BaseExperiment):
         )
 
     def prepare_data(self):
+        log.warning(
+            "\n  [Exp5Generalisation] DEPRECATED per examiner feedback: "
+            "this trains a NEW model on a session-based label and does "
+            "NOT test the Exp1 CRS classifier. Use "
+            "scripts/run_cross_cohort_specificity.py for the current "
+            "cross-cohort specificity analysis."
+        )
         df = self.load_csv()
 
         # Session-based label (same mapping as Exp 2)
