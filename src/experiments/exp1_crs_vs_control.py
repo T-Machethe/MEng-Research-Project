@@ -61,16 +61,37 @@ class Exp1CRSvsControl(BaseExperiment):
     def prepare_data(self):
         df = self.load_csv()
  
-        # ── Filter to relevant groups and sessions ─────────────────────────
+        # ── Filter to relevant groups AND Session 1 only, for BOTH arms ─────
+        # (Examiner feedback: comparable pre-treatment conditions only —
+        #  Sessions 2/3 excluded from both FESS and Control here. See
+        #  src/experiments/all_experiments.py::Exp1CRSvsControl for the
+        #  fuller rationale — this file is a standalone mirror of that
+        #  production copy.)
         fess_s1 = df[(df["GROUP"] == "FESS") & (df["session"] == 1)].copy()
         control = df[df["GROUP"] == "Contr"].copy()
  
+        if "session" in control.columns:
+            control_other_sessions = control[control["session"] != 1]
+            if len(control_other_sessions) > 0:
+                log.warning(
+                    f"\n  [Exp1] Control group has "
+                    f"{len(control_other_sessions)} row(s) with session != 1. "
+                    f"These are EXCLUDED per examiner feedback."
+                )
+            control = control[control["session"] == 1].copy()
+
         fess_s1["label"] = 1   # CRS
         control["label"] = 0   # Healthy
  
         combined = pd.concat([fess_s1, control], ignore_index=True)
         combined = combined.dropna(subset=["label"])
  
+        assert (combined["session"] == 1).all(), (
+            "Exp1CRSvsControl: found non-Session-1 rows after filtering — "
+            "both FESS and Control must be Session 1 only per examiner "
+            "feedback."
+        )
+
         label_fn: Callable = lambda row: int(row["label"])
  
         # ── Log raw class distribution ─────────────────────────────────────
