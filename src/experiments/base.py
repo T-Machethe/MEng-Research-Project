@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
@@ -202,7 +203,65 @@ class BaseExperiment(ABC):
             val_loader=self.val_loader,
             test_loader=self.test_loader,
         )
+
+        self._add_patient_level_test_metrics()
+
         return self.results
+
+    def _add_patient_level_test_metrics(self):
+        """
+        Examiner feedback: segment-pooled test metrics alone are
+        misleading — patients with more segments dominate the pooled
+        number, and segments from one patient are not independent. This
+        adds a PATIENT-level view of the test set alongside the existing
+        segment-level one, computed from the same predictions Trainer
+        already produced (no re-inference needed).
+
+        Silently skipped (with a log message) for dataset types that
+        don't expose `.samples` in the "ID{n}_ses{s}_{col}_seg{i}.pt"
+        filename-parseable form — currently just PairedDataset (Exp4),
+        which is out of scope for this addition.
+        """
+        test_ds = getattr(self.test_loader, "dataset", None)
+        has_probs = "test/all_probs" in self.results and "test/all_labels" in self.results
+
+        if test_ds is None or not hasattr(test_ds, "samples") or not has_probs:
+            log.info(
+                "  [patient-level] Skipped — dataset type or stored "
+                "predictions don't support filename-based patient-ID "
+                "recovery (expected for Exp4/PairedDataset)."
+            )
+            return
+
+        from src.training.patient_metrics import (
+            patient_ids_from_samples, aggregate_to_patient_level,
+            compute_patient_level_metrics,
+        )
+
+        probs  = np.asarray(self.results["test/all_probs"])
+        labels = np.asarray(self.results["test/all_labels"])
+        patient_ids = patient_ids_from_samples(test_ds.samples)
+
+        assert len(patient_ids) == len(probs) == len(labels), (
+            f"[patient-level] length mismatch: "
+            f"{len(patient_ids)} patient_ids vs {len(probs)} probs vs "
+            f"{len(labels)} labels — test_loader must be shuffle=False "
+            f"and iterated exactly once for this alignment to hold."
+        )
+
+        patient_df = aggregate_to_patient_level(probs, patient_ids, labels)
+        patient_metrics = compute_patient_level_metrics(
+            patient_df, self.num_classes, split_name="test"
+        )
+
+        log.info(f"\n  [patient-level] Test set: {len(patient_df)} patients "
+                  f"(vs {len(probs)} segments)")
+        for k in ("test/patient_level/accuracy", "test/patient_level/f1_macro"):
+            if k in patient_metrics:
+                log.info(f"    {k:<35} {patient_metrics[k]:.4f}")
+
+        self.results.update(patient_metrics)
+        self.results["test/patient_level/per_patient"] = patient_df.to_dict(orient="records")
 
     def report(self):
         """Save and print a human-readable results summary."""
