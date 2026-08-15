@@ -679,6 +679,63 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
     log.info(f"\n  Full results saved -> {output_dir}")
 
 
+def resolve_segment_dirs(segment_dir: _Path, modes_needed: List[str]) -> Dict[str, str]:
+    """
+    Maps each training mode to the segment folder it should read from.
+
+    Two layouts are supported:
+      1. Per-mode subfolders (<segment_dir>/scratch/, <segment_dir>/
+         finetune/) — what --step regenerate produces, since scratch and
+         finetune segment the waveform differently in principle.
+      2. A FLAT folder with .pt files directly inside — what actually
+         exists for this project's real data: Exp1's original
+         preprocessing (see notebook) ran mode="scratch" ONCE into a
+         single clean_audio_3s/ folder, and that same flat folder was
+         used as --segment_dir for BOTH scratch and finetune training
+         runs. In that reality, both modes should read from the SAME
+         flat folder — there's no actual finetune-mode segmentation to
+         find, and expecting one caused every backbone to be silently
+         skipped with "No clean segment dir for mode=X" (see conversation
+         history: this was a wrapper/symlink workaround before it became
+         this auto-detection).
+
+    Layout 1 takes priority when both are present (e.g. after a
+    --step regenerate run sitting alongside an old flat folder at the
+    same path — shouldn't normally happen, but per-mode wins if it does).
+    """
+    has_mode_subfolders = any((segment_dir / m).exists() and
+                               any((segment_dir / m).glob("*.pt"))
+                               for m in modes_needed)
+    if has_mode_subfolders:
+        resolved = {}
+        for m in modes_needed:
+            mode_dir = segment_dir / m
+            if mode_dir.exists() and any(mode_dir.glob("*.pt")):
+                resolved[m] = str(mode_dir)
+            else:
+                log.warning(f"  [segment_dir] {mode_dir} missing or empty — "
+                            f"mode={m} will be skipped at evaluate time.")
+        return resolved
+
+    is_flat_with_segments = segment_dir.exists() and any(segment_dir.glob("*.pt"))
+    if is_flat_with_segments:
+        log.warning(
+            f"  [segment_dir] {segment_dir} has no per-mode subfolders — "
+            f"treating it as a FLAT segment directory and reusing it for "
+            f"every mode needed ({modes_needed}). This matches how Exp1 "
+            f"was actually trained (single preprocessing pass, mode="
+            f"\"scratch\", reused for finetune runs too — see notebook). "
+            f"If you actually ran --step regenerate and expected per-mode "
+            f"folders here, check --segment_dir points at the regenerate "
+            f"output, not the flat original."
+        )
+        return {m: str(segment_dir) for m in modes_needed}
+
+    log.warning(f"  [segment_dir] {segment_dir} not found or has no .pt "
+                f"files — every backbone will be skipped.")
+    return {}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -717,7 +774,7 @@ def main():
         regenerate_clean_segments(filtered, project_root, segment_dir, modes_needed)
 
     if args.step in ("evaluate", "all"):
-        segment_dirs = {m: str(segment_dir / m) for m in modes_needed}
+        segment_dirs = resolve_segment_dirs(segment_dir, modes_needed)
         do_evaluate(filtered, segment_dirs, checkpoints_dir, output_dir,
                     device, args.batch_size, args.threshold)
 
