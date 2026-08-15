@@ -786,11 +786,27 @@ class Trainer:
         except Exception as e:
             log.warning(f"  Reporter failed (non-fatal): {e}")
         
-        # ── SVM on frozen finetune embeddings (finetune mode only) ────────
-        if cfg.mode == "finetune" and getattr(cfg, "use_svm", False):
+        # ── SVM on frozen backbone embeddings ──────────────────────────────
+        # Examiner-requested extension: previously finetune-mode only (the
+        # SVM was meant purely as a transfer-learning probe — "does the
+        # PRETRAINED representation already contain useful structure?").
+        # Now also runs in scratch mode when --use_svm is set, as a
+        # deliberate NEGATIVE CONTROL: scratch's backbone has no pretrained
+        # weights, so a frozen-embedding probe on it is expected to sit
+        # near chance. That expected near-chance result is itself the
+        # evidence — if scratch-SVM is much weaker than finetune-SVM, that
+        # supports the transfer-learning hypothesis more directly than
+        # comparing the two end-to-end neural models alone (which conflates
+        # "useful pretrained features" with "architecture trained longer/
+        # differently"). Interpret scratch-SVM as a sanity-check floor, not
+        # as a candidate "best model" in its own right.
+        if getattr(cfg, "use_svm", False):
             try:
                 from src.training.svm_classifier import train_svm
-                log.info("\n  Running SVM classifier on backbone embeddings...")
+                probe_kind = ("transfer-learning probe" if cfg.mode == "finetune"
+                              else "negative control — expect near-chance")
+                log.info(f"\n  Running SVM classifier on backbone embeddings "
+                         f"({cfg.mode} mode — {probe_kind})...")
                 svm_results = train_svm(
                     model       = self.model,
                     train_loader= train_loader,

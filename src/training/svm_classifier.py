@@ -215,4 +215,19 @@ def train_svm(
                                index=False, float_format="%.4f")
     log.info(f"  [SVM] Results saved → {out / 'svm_results.csv'}")
 
+    # ── Persist fitted SVM + scaler ────────────────────────────────────────
+    # Previously only metrics were saved (svm_results.csv / results_summary
+    # .json) — the fitted sklearn objects themselves were never written to
+    # disk, so nothing downstream (e.g. a cross-cohort specificity check)
+    # could run new inference through the SVM without retraining it. Since
+    # SVC(random_state=42) + the deterministic patient_level_split(seed=42)
+    # train set make this fit fully reproducible, this is also always safe
+    # to regenerate later if a saved artifact is ever lost.
+    import joblib
+    joblib.dump(
+        {"svm": svm, "scaler": scaler, "kernel": kernel, "C": C},
+        out / "svm_model.joblib",
+    )
+    log.info(f"  [SVM] Fitted model + scaler saved → {out / 'svm_model.joblib'}")
+
     return results
