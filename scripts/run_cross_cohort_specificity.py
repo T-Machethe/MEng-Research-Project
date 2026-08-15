@@ -498,12 +498,63 @@ def load_exp1_baseline(checkpoints_dir: _Path, job_name: str,
             baseline["test/patient_level/control_false_positive_rate"] = float(control_flagged)
             baseline["test/patient_level/control_n_patients"] = int(len(control))
 
+    # ── Same, for the SVM head, when present ────────────────────────────
+    svm_block = exp1_results.get("svm", {})
+    svm_baseline = {
+        k: v for k, v in svm_block.items()
+        if k.startswith("test/patient_level") and k != "test/patient_level/per_patient"
+    }
+    svm_per_patient = svm_block.get("test/patient_level/per_patient", [])
+    if svm_per_patient:
+        svm_pp = pd.DataFrame(svm_per_patient)
+        svm_control = svm_pp[svm_pp["label"] == 0]
+        if len(svm_control) > 0:
+            svm_control_flagged = (svm_control["p_class1"] >= threshold).mean()
+            svm_baseline["test/patient_level/control_false_positive_rate"] = float(svm_control_flagged)
+            svm_baseline["test/patient_level/control_n_patients"] = int(len(svm_control))
+    if svm_baseline:
+        baseline["svm"] = svm_baseline
+
     return baseline
 
 
 # ═════════════════════════════════════════════════════════════════════════
 # Orchestration
 # ═════════════════════════════════════════════════════════════════════════
+
+def run_svm_inference(model, svm_bundle: Dict, dataset: SinusitisDataset,
+                       device: torch.device, batch_size: int) -> Tuple[np.ndarray, List[str]]:
+    """
+    SVM counterpart of run_inference(). Reuses model.backbone for frozen
+    embedding extraction (svm_classifier.py::extract_embeddings — same
+    function used at Exp1 training time), then predict_proba() through the
+    persisted, already-fitted SVC + StandardScaler
+    (svm_classifier.py::train_svm() now saves these to svm_model.joblib —
+    see src/training/svm_classifier.py). No SVM (re)training happens here.
+    """
+    from src.training.svm_classifier import extract_embeddings
+
+    loader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=False,
+        collate_fn=collate_standard,
+    )
+    patient_ids = patient_ids_from_samples(dataset.samples)
+
+    model.eval()
+    model.to(device)
+    embeddings, _ = extract_embeddings(model, loader, device)
+
+    scaler = svm_bundle["scaler"]
+    svm    = svm_bundle["svm"]
+    X = scaler.transform(embeddings)
+    probs = svm.predict_proba(X)
+
+    assert len(patient_ids) == len(probs), (
+        f"Patient ID / SVM prediction count mismatch: "
+        f"{len(patient_ids)} ids vs {len(probs)} predictions."
+    )
+    return probs, patient_ids
+
 
 def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                  checkpoints_dir: _Path, output_dir: _Path,
@@ -532,6 +583,17 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
         model = build_inference_model(backbone_type, mode, pretrained)
         load_checkpoint(str(ckpt_path), model)
 
+        # ── Optional SVM head — only if Exp1 training saved one ───────────
+        svm_bundle = None
+        svm_path = checkpoints_dir / "exp1_backbone_comparison" / job_name / "svm" / "svm_model.joblib"
+        if svm_path.exists():
+            import joblib
+            svm_bundle = joblib.load(svm_path)
+            log.info(f"  Found SVM head: {svm_path} "
+                     f"(kernel={svm_bundle.get('kernel')}, C={svm_bundle.get('C')})")
+        else:
+            log.info(f"  No SVM head at {svm_path} — MLP-only for this backbone.")
+
         exp1_baseline = load_exp1_baseline(checkpoints_dir, job_name, threshold)
 
         job_result = {"exp1_baseline": exp1_baseline}
@@ -556,18 +618,33 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                 "per_patient": patient_df.to_dict(orient="records"),
             }
             log.info(
-                f"    {grp:<10} n_patients={metrics.get('specificity/n_patients')}  "
+                f"    {grp:<10} [MLP] n_patients={metrics.get('specificity/n_patients')}  "
                 f"mean P(CRS)={metrics.get('specificity/mean_p_crs', 0):.3f}  "
                 f"flagged-CRS rate={metrics.get('specificity/flagged_crs_rate', 0):.3f}  "
                 f"specificity={metrics.get('specificity/specificity_pct', 0):.1f}%"
             )
+
+            if svm_bundle is not None:
+                svm_probs, svm_patient_ids = run_svm_inference(
+                    model, svm_bundle, dataset, device, batch_size)
+                svm_patient_df = aggregate_per_patient(svm_probs, svm_patient_ids, group_lookup)
+                svm_metrics = specificity_metrics(svm_patient_df, threshold)
+
+                job_result[grp]["svm_metrics"] = svm_metrics
+                job_result[grp]["svm_per_patient"] = svm_patient_df.to_dict(orient="records")
+                log.info(
+                    f"    {grp:<10} [SVM] n_patients={svm_metrics.get('specificity/n_patients')}  "
+                    f"mean P(CRS)={svm_metrics.get('specificity/mean_p_crs', 0):.3f}  "
+                    f"flagged-CRS rate={svm_metrics.get('specificity/flagged_crs_rate', 0):.3f}  "
+                    f"specificity={svm_metrics.get('specificity/specificity_pct', 0):.1f}%"
+                )
 
         if exp1_baseline:
             ctrl_fpr = exp1_baseline.get("test/patient_level/control_false_positive_rate")
             ctrl_n   = exp1_baseline.get("test/patient_level/control_n_patients")
             if ctrl_fpr is not None:
                 log.info(
-                    f"    (Exp1's own held-out CONTROL patients, n={ctrl_n}: "
+                    f"    (Exp1's own held-out CONTROL patients [MLP], n={ctrl_n}: "
                     f"flagged-as-CRS rate={ctrl_fpr:.3f} — THIS is the "
                     f"like-for-like comparison for the Sept/Tonsill "
                     f"flagged-CRS rates above. Pooled FESS+Control "
@@ -580,6 +657,16 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                     f"{exp1_baseline.get('test/patient_level/accuracy', float('nan')):.3f} "
                     f"— per-patient predictions unavailable for a "
                     f"Control-only comparison; re-run Exp1 to get one.)"
+                )
+
+            svm_baseline = exp1_baseline.get("svm", {})
+            svm_ctrl_fpr = svm_baseline.get("test/patient_level/control_false_positive_rate")
+            svm_ctrl_n   = svm_baseline.get("test/patient_level/control_n_patients")
+            if svm_ctrl_fpr is not None:
+                log.info(
+                    f"    (Exp1's own held-out CONTROL patients [SVM], "
+                    f"n={svm_ctrl_n}: flagged-as-CRS rate={svm_ctrl_fpr:.3f} "
+                    f"— comparison anchor for the SVM flagged-CRS rates above.)"
                 )
 
         combined_summary[job_name] = job_result
