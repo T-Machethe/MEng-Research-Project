@@ -263,6 +263,34 @@ class BaseExperiment(ABC):
         self.results.update(patient_metrics)
         self.results["test/patient_level/per_patient"] = patient_df.to_dict(orient="records")
 
+        # ── Same treatment for the SVM head, when present ──────────────────
+        # SVM evaluates the exact same test_loader (same order, same
+        # patient_ids computed above) — see src/training/svm_classifier.py
+        # ::train_svm(), which is always called with the shared
+        # train/val/test_loader from this same run(). No separate ID
+        # recovery needed.
+        svm_results = self.results.get("svm")
+        if svm_results and "test/all_probs" in svm_results and "test/all_labels" in svm_results:
+            svm_probs  = np.asarray(svm_results["test/all_probs"])
+            svm_labels = np.asarray(svm_results["test/all_labels"])
+            if len(svm_probs) == len(patient_ids):
+                svm_patient_df = aggregate_to_patient_level(svm_probs, patient_ids, svm_labels)
+                svm_patient_metrics = compute_patient_level_metrics(
+                    svm_patient_df, self.num_classes, split_name="test"
+                )
+                log.info(f"\n  [patient-level][SVM] Test set: {len(svm_patient_df)} patients")
+                for k in ("test/patient_level/accuracy", "test/patient_level/f1_macro"):
+                    if k in svm_patient_metrics:
+                        log.info(f"    {k:<35} {svm_patient_metrics[k]:.4f}")
+                svm_results.update(svm_patient_metrics)
+                svm_results["test/patient_level/per_patient"] = svm_patient_df.to_dict(orient="records")
+            else:
+                log.warning(
+                    f"  [patient-level][SVM] Skipped — {len(svm_probs)} SVM "
+                    f"predictions vs {len(patient_ids)} patient_ids "
+                    f"(unexpected length mismatch)."
+                )
+
     def report(self):
         """Save and print a human-readable results summary."""
         if not self.results:
