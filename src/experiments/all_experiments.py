@@ -89,7 +89,16 @@ class Exp1CRSvsControl(BaseExperiment):
             "for both cohorts."
         )
 
-    def prepare_data(self):
+    def get_filtered_labeled_df(self):
+        """
+        Filtering + labeling only — no split. Factored out of
+        prepare_data() so other callers (e.g. scripts/run_nested_cv.py's
+        outer/inner GroupKFold loops) can get the exact same
+        Session-1-both-arms-filtered, labeled population without
+        duplicating this logic and risking drift from what Exp1 actually
+        trains on. prepare_data() below is just this plus the single
+        train/val/test split.
+        """
         df = self.load_csv()
 
         # ── Filter to relevant groups AND Session 1 only, for BOTH arms ─────
@@ -131,6 +140,10 @@ class Exp1CRSvsControl(BaseExperiment):
         )
 
         label_fn: Callable = lambda row: int(row["label"])
+        return combined, label_fn
+
+    def prepare_data(self):
+        combined, label_fn = self.get_filtered_labeled_df()
 
         # ── Log raw class distribution ─────────────────────────────────────
         log.info("\n  [Exp1] Raw class distribution (before split, Session 1 only):")
