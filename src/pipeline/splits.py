@@ -358,6 +358,114 @@ def describe_test_split(
     return demo_df, flags, latex_table
 
 
+def patient_group_kfold(
+    df: pd.DataFrame,
+    n_splits: int,
+    seed: int = 42,
+    stratify_col: str = "GROUP",
+) -> List[Tuple[List[str], List[str]]]:
+    """
+    Patient-grouped K-fold splitting for (nested) cross-validation.
+
+    Same non-negotiable guarantee as patient_level_split(): no patient
+    (by "ID") ever appears in both the train and held-out portion of a
+    fold — every row for a given patient, across every session, moves
+    together. This is the CV analogue of patient_level_split()'s single
+    train/val/test split; use this one when you need K rotating folds
+    (nested CV outer loop, nested CV inner loop, or plain K-fold) instead
+    of one fixed partition.
+
+    Stratification: uses sklearn's StratifiedGroupKFold when available
+    (sklearn >= 1.1), which balances both class/group proportions AND
+    fold sizes as well as the group constraint allows. Falls back to a
+    manual per-stratum round-robin assignment (same spirit as
+    patient_level_split()'s per-group loop) if StratifiedGroupKFold isn't
+    importable, so this doesn't hard-fail on an older sklearn build (e.g.
+    an older Colab image) — the manual fallback still guarantees the
+    patient-grouping constraint; it's the class-balance-across-folds
+    property that's best-effort in that path, not the leakage guarantee.
+
+    Parameters
+    ----------
+    df            : full filtered dataframe (one row per recording/session).
+    n_splits      : number of folds (K).
+    seed          : random seed for reproducibility.
+    stratify_col  : column used for stratified fold assignment.
+
+    Returns
+    -------
+    List of (train_ids, test_ids) tuples, one per fold, each a list of
+    patient ID strings. Caller filters df by df["ID"].isin(ids) to get
+    the actual fold dataframes — kept as ID lists (not dataframes) so the
+    same fold assignment can be reused against different segment_dirs
+    or re-applied to a differently-filtered dataframe with the same
+    patient population (e.g. inner folds re-splitting an outer-fold's
+    training patients).
+    """
+    patient_groups = df.groupby("ID")[stratify_col].first().reset_index()
+    ids     = patient_groups["ID"].values
+    strata  = patient_groups[stratify_col].values
+
+    smallest_stratum = pd.Series(strata).value_counts().min()
+    if smallest_stratum < n_splits:
+        log.warning(
+            f"  [patient_group_kfold] Smallest stratum in {stratify_col!r} "
+            f"has only {smallest_stratum} patient(s), fewer than "
+            f"n_splits={n_splits}. Some folds may end up without a "
+            f"patient from that stratum — check fold sizes below."
+        )
+
+    folds: List[Tuple[List[str], List[str]]] = []
+    try:
+        from sklearn.model_selection import StratifiedGroupKFold
+        skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        for train_idx, test_idx in skf.split(ids, strata, groups=ids):
+            folds.append((ids[train_idx].tolist(), ids[test_idx].tolist()))
+    except ImportError:
+        log.warning(
+            "  [patient_group_kfold] sklearn.model_selection."
+            "StratifiedGroupKFold not importable (sklearn < 1.1?) — "
+            "falling back to manual per-stratum round-robin assignment. "
+            "Patient-grouping guarantee still holds; fold class-balance "
+            "is best-effort in this path."
+        )
+        rng = np.random.default_rng(seed)
+        fold_ids: List[List[str]] = [[] for _ in range(n_splits)]
+        for group in pd.unique(strata):
+            # .to_numpy(dtype=object) rather than .values: pandas' newer
+            # StringDtype backs .values with a StringArray, which
+            # np.random.Generator.shuffle only shuffles safely for plain
+            # ndarrays/sequences — silently risking duplicated entries
+            # otherwise (this is exactly the kind of bug that would
+            # silently reintroduce patient leakage, so worth being
+            # explicit here rather than trusting the array type).
+            group_ids = (patient_groups[patient_groups[stratify_col] == group]["ID"]
+                         .to_numpy(dtype=object).copy())
+            rng.shuffle(group_ids)
+            for i, pid in enumerate(group_ids):
+                fold_ids[i % n_splits].append(pid)
+        for k in range(n_splits):
+            test_ids  = fold_ids[k]
+            train_ids = [pid for j in range(n_splits) if j != k for pid in fold_ids[j]]
+            folds.append((train_ids, test_ids))
+
+    # Verify the one guarantee that must never break, regardless of path taken.
+    for k, (train_ids, test_ids) in enumerate(folds):
+        overlap = set(train_ids) & set(test_ids)
+        assert not overlap, (
+            f"[patient_group_kfold] Fold {k}: patient(s) {overlap} appear in "
+            f"both train and test — this must never happen."
+        )
+
+    log.info(f"\n  [patient_group_kfold] {n_splits} folds over "
+             f"{len(ids)} patients, stratified by {stratify_col!r}:")
+    for k, (train_ids, test_ids) in enumerate(folds):
+        log.info(f"    Fold {k}: train={len(train_ids)} patients, "
+                 f"test={len(test_ids)} patients")
+
+    return folds
+
+
 # ── CLI entry point ─────────────────────────────────────────────────────────-
 if __name__ == "__main__":
     import argparse, sys
