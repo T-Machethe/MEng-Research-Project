@@ -814,11 +814,11 @@ class ExperimentReporter:
             _legend_handles = [
                 Patch(color=SCRATCH_COLOR,  label="Scratch (wav2vec2 / WavLM)"),
                 Patch(color=FINETUNE_COLOR, label="Finetune MLP (wav2vec2 / WavLM)"),
-                Patch(color=XLSR_COLOR,     label="XLS-R Finetune"),
+                Patch(color=XLSR_FINETUNE,  label="XLS-R Finetune"),
             ]
             if "xlsr_scratch" in cols:
                 _legend_handles.append(
-                    Patch(color=XLSR_SCRATCH_COLOR, label="XLS-R Scratch"))
+                    Patch(color=XLSR_SCRATCH, label="XLS-R Scratch"))
             axes[1].legend(handles=_legend_handles, fontsize=8,
                         framealpha=0.9, edgecolor=BORDER)
             plt.tight_layout()
