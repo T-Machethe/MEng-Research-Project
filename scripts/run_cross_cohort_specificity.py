@@ -558,7 +558,8 @@ def run_svm_inference(model, svm_bundle: Dict, dataset: SinusitisDataset,
 
 def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                  checkpoints_dir: _Path, output_dir: _Path,
-                 device: torch.device, batch_size: int, threshold: float):
+                 device: torch.device, batch_size: int, threshold: float,
+                 overwrite: bool = False):
     output_dir.mkdir(parents=True, exist_ok=True)
     group_lookup = dict(zip(filtered["ID"], filtered["GROUP"]))
 
@@ -566,6 +567,18 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
 
     for job_name, backbone_type, mode, pretrained in BACKBONE_JOBS:
         log.info(f"\n{'─'*70}\n  Evaluating fixed Exp1 checkpoint: {job_name}\n{'─'*70}")
+
+        # ── Skip if already evaluated — this is inference over the full
+        # Sept/Tonsill population per backbone, not free, and nothing here
+        # changes between runs unless the checkpoint itself changes. Reuse
+        # the existing per-job JSON instead of re-running the GPU pass.
+        job_path = output_dir / f"{job_name}_specificity.json"
+        if job_path.exists() and not overwrite:
+            log.info(f"  ↩  SKIP (already evaluated): {job_path}")
+            log.info(f"     Pass --overwrite to force re-evaluation.")
+            with open(job_path) as f:
+                combined_summary[job_name] = json.load(f)
+            continue
 
         ckpt_path = checkpoints_dir / "exp1_backbone_comparison" / job_name / "best_model.pt"
         if not ckpt_path.exists():
@@ -756,6 +769,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--overwrite", action="store_true",
+                         help="Re-evaluate even if a backbone's *_specificity.json "
+                              "already exists. Off by default — evaluate is real GPU "
+                              "inference over the full Sept/Tonsill population per "
+                              "backbone, not free to redo by accident.")
     args = parser.parse_args()
 
     project_root   = _Path(args.project_root)
@@ -776,7 +794,7 @@ def main():
     if args.step in ("evaluate", "all"):
         segment_dirs = resolve_segment_dirs(segment_dir, modes_needed)
         do_evaluate(filtered, segment_dirs, checkpoints_dir, output_dir,
-                    device, args.batch_size, args.threshold)
+                    device, args.batch_size, args.threshold, args.overwrite)
 
 
 if __name__ == "__main__":
