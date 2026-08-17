@@ -345,21 +345,44 @@ def fig_cross_exp_heatmap(all_data: dict, out: Path):
 def fig_exp1_performance_v2(all_data: dict, out: Path):
     exp1 = all_data.get("1",{})
 
-    f1s  = [g(exp1.get(m,{}), "test/f1_macro")  or 0 for m in MODEL_ORDER]
-    aucs = [g(exp1.get(m,{}), "test/roc_auc")   or 0 for m in MODEL_ORDER]
+    f1s  = [g(exp1.get(m,{}), "test/f1_macro")  for m in MODEL_ORDER]
+    aucs = [g(exp1.get(m,{}), "test/roc_auc")   for m in MODEL_ORDER]
     sf1s = [sv(exp1.get(m,{}), "test/f1_macro")     for m in MODEL_ORDER]
     saucs= [sv(exp1.get(m,{}), "test/roc_auc")      for m in MODEL_ORDER]
 
-    # Known fallbacks
+    # Known fallbacks — from an OLD run, predating the Session-1-Control
+    # fix (see examiner-feedback branch). These numbers no longer
+    # describe the current Exp1 methodology. Previously substituted
+    # whenever a live value was falsy — which incorrectly included a
+    # genuine score of exactly 0.0 (e.g. a degenerate model), silently
+    # replacing a real (if bad) result with a stale unrelated number and
+    # giving no indication in the chart that this happened. Now only
+    # substitutes on missing data (None), and prints a loud warning any
+    # time a fallback is actually used, since a chart mixing live and
+    # stale-pre-fix numbers with no visual distinction is exactly the
+    # kind of thing that could end up wrong in the thesis unnoticed.
     known_f1  = [0.761,0.567,0.647,0.579,None, 0.696]
     known_auc = [0.831,0.665,0.767,0.661,None, 0.791]
     known_sf1 = [None, 0.562,None, 0.584,None, 0.685]
     known_sau = [None, 0.637,None, 0.653,None, 0.777]
 
-    f1s  = [v if v else known_f1[i]  for i,v in enumerate(f1s)]
-    aucs = [v if v else known_auc[i] for i,v in enumerate(aucs)]
-    sf1s = [v if v else known_sf1[i] for i,v in enumerate(sf1s)]
-    saucs= [v if v else known_sau[i] for i,v in enumerate(saucs)]
+    def fill(vals, fallback, label):
+        out_vals = []
+        for i, v in enumerate(vals):
+            if v is None and fallback[i] is not None:
+                print(f"  ⚠ [fig_exp1_performance_v2] {MODEL_ORDER[i]} {label}: no live "
+                      f"result found — substituting a STALE pre-Session-1-fix value "
+                      f"({fallback[i]}). This chart is now a MIX of live and outdated "
+                      f"numbers. Re-run Exp1 for this backbone before trusting this figure.")
+                out_vals.append(fallback[i])
+            else:
+                out_vals.append(v if v is not None else 0)
+        return out_vals
+
+    f1s  = fill(f1s,  known_f1,  "test/f1_macro")
+    aucs = fill(aucs, known_auc, "test/roc_auc")
+    sf1s = fill(sf1s, known_sf1, "svm test/f1_macro")
+    saucs= fill(saucs, known_sau, "svm test/roc_auc")
 
     fig, axes = plt.subplots(1,2,figsize=(14,5.5),facecolor=BG)
     fig.suptitle("Experiment 1: Binary Sinusitis Detection — Test Performance",
@@ -1758,7 +1781,7 @@ FIGURE_MAP = {
 
 
 def run_all(all_data: dict, out: Path, figure: int = 0,
-            ablation_data: dict = None, pred_data: dict = None):
+            ablation_runs: dict = None, pred_data: dict = None):
     def should_run(n): return figure == 0 or figure == n
 
     if should_run(1):
@@ -1838,27 +1861,34 @@ def run_all(all_data: dict, out: Path, figure: int = 0,
             fig_stat_mcnemar(pred_data, out)
 
     # ── Ablation figures (13–16) — require ablation_results.json ─────────────
-    if ablation_data is None:
+    # Now runs ONCE PER backbone/mode found (ablation_runs is keyed by
+    # "<backbone>_<mode>", populated in main() from the namespaced ablation
+    # output — see run_ablation.py's backbone-parameterization commit),
+    # writing each backbone's figures into its own out/<backbone>_<mode>/
+    # subfolder rather than assuming a single ablation run exists.
+    if not ablation_runs:
         if any(should_run(n) for n in [13, 14, 15, 16]):
-            print("\n[ablation] No ablation_results.json loaded — skipping figures 13–16.")
+            print("\n[ablation] No ablation results loaded — skipping figures 13–16.")
     else:
         ABL_CONDITION_MAP = {"freeze": 13, "loss": 14, "decay": 15}
 
-        if figure == 0:
-            # Run all conditions present in the JSON
-            print("\n── Figures 13–15: Ablation condition charts ────────────────")
-            for key, entries in ablation_data.items():
-                fig_ablation_condition(key, entries, out)
-        else:
-            # Run only the specifically requested condition
-            for cond, fig_num in ABL_CONDITION_MAP.items():
-                if should_run(fig_num) and cond in ablation_data:
-                    print(f"\n── Figure {fig_num}: Ablation [{cond}] ──────────────────────")
-                    fig_ablation_condition(cond, ablation_data[cond], out)
+        for backbone_mode, ablation_data in ablation_runs.items():
+            abl_out = out / "ablation_figures" / backbone_mode
+            abl_out.mkdir(parents=True, exist_ok=True)
 
-        if should_run(16):
-            print("\n── Figure 16: Ablation summary ─────────────────────────────")
-            fig_ablation_summary(ablation_data, out)
+            if figure == 0:
+                print(f"\n── Figures 13–15: Ablation condition charts [{backbone_mode}] ──")
+                for key, entries in ablation_data.items():
+                    fig_ablation_condition(key, entries, abl_out)
+            else:
+                for cond, fig_num in ABL_CONDITION_MAP.items():
+                    if should_run(fig_num) and cond in ablation_data:
+                        print(f"\n── Figure {fig_num}: Ablation [{cond}] [{backbone_mode}] ──")
+                        fig_ablation_condition(cond, ablation_data[cond], abl_out)
+
+            if should_run(16):
+                print(f"\n── Figure 16: Ablation summary [{backbone_mode}] ──")
+                fig_ablation_summary(ablation_data, abl_out)
 
     print(f"\nAll figures saved to:\n  {out}")
 
@@ -1887,19 +1917,40 @@ if __name__ == "__main__":
     all_data = load_all(res_d)
     print(f"Loaded {len(all_data)} experiment JSON files: {list(all_data.keys())}")
 
-    # Load ablation JSON if present (optional — figures 1–12 run without it)
-    # NEW — checks results_dir first, then results_dir/ablation/
-    abl_path = res_d / "ablation_results.json"
-    if not abl_path.exists():
-        abl_path = res_d / "ablation" / "ablation_results.json"
+    # Load ablation JSON if present (optional — figures 1–12 run without it).
+    # Ablation output is now namespaced per backbone/mode
+    # (ablation/<backbone>_<mode>/ablation_results.json — see
+    # run_ablation.py's backbone-parameterization commit), not a single
+    # flat ablation_results.json — that flat/single-location assumption
+    # broke silently the moment ablation started supporting more than one
+    # backbone. Now searches every namespaced subdirectory and generates
+    # figures 13–16 once PER backbone/mode found, into a namespaced output
+    # subfolder each, rather than picking one arbitrarily or silently
+    # reporting "not found" against a path that no longer exists.
+    ablation_root = res_d / "ablation"
+    ablation_runs = {}   # {"<backbone>_<mode>": ablation_data}
+    if ablation_root.exists():
+        for candidate in sorted(ablation_root.glob("*/ablation_results.json")):
+            backbone_mode = candidate.parent.name
+            with open(candidate) as f:
+                ablation_runs[backbone_mode] = json.load(f)
+    # Backward compatibility: old flat layout from before namespacing existed.
+    legacy_path = res_d / "ablation_results.json"
+    if not legacy_path.exists():
+        legacy_path = res_d / "ablation" / "ablation_results.json"
+    if legacy_path.exists():
+        print(f"⚠ Old flat-layout ablation_results.json found at {legacy_path} — "
+              f"this predates backbone namespacing and doesn't indicate which "
+              f"backbone it came from. Included as 'legacy', but check whether "
+              f"it still matches your current pipeline before trusting it.")
+        with open(legacy_path) as f:
+            ablation_runs["legacy"] = json.load(f)
 
-    if abl_path.exists():
-        with open(abl_path) as f:
-            ablation_data = json.load(f)
-        print(f"Loaded ablation JSON ({abl_path}): {list(ablation_data.keys())}")
+    if ablation_runs:
+        print(f"Loaded ablation results for: {list(ablation_runs.keys())}")
     else:
-        ablation_data = None
-        print("No ablation_results.json found — figures 13–16 will be skipped.")
+        print("No ablation_results.json found (checked ablation/*/ and the old flat "
+              "location) — figures 13–16 will be skipped.")
 
     # Load Experiment 1 predictions JSON if present (figures 21-23)
     pred_path = res_d / "exp1_predictions.json"
@@ -1914,4 +1965,4 @@ if __name__ == "__main__":
         print("No exp1_predictions.json found — figures 21–23 will be skipped.")
 
     run_all(all_data, out_d, figure=args.figure,
-            ablation_data=ablation_data, pred_data=pred_data)
+            ablation_runs=ablation_runs, pred_data=pred_data)
