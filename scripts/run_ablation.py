@@ -1,9 +1,8 @@
 """
 run_ablation.py
 ─────────────────────────────────────────────────────────────────────────────
-Two-phase ablation study on Experiment 1 (binary CRS detection) using
-XLS-R-finetune — the best-performing finetune model on Exp1 (F1=0.696,
-AUC=0.791).
+Two-phase ablation study on Experiment 1 (binary CRS detection), for
+whichever backbone/mode you point it at via --backbone/--mode.
 
 Three factors varied one at a time (all others at current defaults):
   A. freeze — frozen Transformer layers: 0, 2, 4 (current), 6, 8, all-frozen
@@ -13,10 +12,36 @@ Three factors varied one at a time (all others at current defaults):
 PHASE 1 (--run):    train all variants, save results_summary.json per variant
 PHASE 2 (--report): read ablation_results.json, print tables, write LaTeX
 
+Backbone/mode scoping
+────────────────────────
+Originally hardcoded to XLS-R finetune only. Now takes --backbone/--mode,
+and results are namespaced under <output_dir>/<backbone>_<mode>/<factor>/
+so ablating multiple architectures (e.g. your nested-CV shortlist) into
+the SAME --output_dir doesn't collide — each backbone/mode gets its own
+subtree and its own ablation_results.json. --report also takes
+--backbone/--mode to pick which subtree to read.
+
+The "freeze=all" variant is backbone-aware: it freezes every Transformer
+layer the backbone actually has (12 for wav2vec2-base/WavLM-base, 24 for
+XLS-R-300m — see NUM_LAYERS below), not a value hardcoded for XLS-R. This
+was a real bug for any non-XLS-R backbone: passing --freeze_layers 24 to
+a 12-layer backbone doesn't error, it just silently clamps/over-freezes,
+which would have made every non-XLS-R "freeze=all" ablation variant
+meaningless without any visible failure.
+
+Note: the freeze levels in between (0, 2, 4, 6, 8) are kept as ABSOLUTE
+layer counts across every backbone for direct comparability, rather than
+rescaled proportionally to each backbone's depth (e.g. 8/24 vs 8/12 are
+not the same fraction of the network). State this explicitly if
+comparing freeze ablations across backbones of different depths in the
+thesis — "freeze=8" means something structurally different for a
+12-layer vs 24-layer backbone.
+
 Usage
 ─────
     # Phase 1 — run one factor per Colab session (~40 min per factor on T4)
     python scripts/run_ablation.py --run \\
+        --backbone wav2vec2 --mode finetune \\
         --factor freeze \\
         --segment_dir /content/clean_audio_3s \\
         --csv_path    /path/to/clinical_all_sessions.csv \\
@@ -25,11 +50,12 @@ Usage
 
     # Phase 2 — generate LaTeX tables after all factors complete
     python scripts/run_ablation.py --report \\
+        --backbone wav2vec2 --mode finetune \\
         --output_dir  /content/drive/MyDrive/MSc_Sinusitis_results/ablation \\
-        --output_tex  /content/drive/MyDrive/thesis_outputs/ablation_tables.tex
+        --output_tex  /content/drive/MyDrive/thesis_outputs/ablation_wav2vec2_finetune.tex
 
     # Dry run — print commands without using GPU
-    python scripts/run_ablation.py --run --factor all --dry_run ...
+    python scripts/run_ablation.py --run --backbone xlsr --mode finetune --factor all --dry_run ...
 """
 
 import argparse
@@ -41,49 +67,70 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# ── Defaults (current XLS-R finetune config) ──────────────────────────────────
-DEFAULTS = dict(
-    backbone           = "xlsr",
-    mode               = "finetune",
-    exp                = "1",
-    num_epochs         = 8,
-    batch_size         = 8,           # XLS-R memory constraint
-    learning_rate      = 1e-5,
-    freeze_layers      = 4,           # current
-    focal_gamma        = 2.0,         # current
-    layerwise_lr_decay = 0.9,         # current (auto-adjusted for 24 layers)
-    label_smoothing    = 0.1,
-    head_warmup_epochs = 1,
-    early_stop_patience= 3,
-    early_stop_metric  = "val_f1",
-    imbalance          = "weights",
-    warmup_steps       = 100,
-    use_svm            = True,
-)
+# Actual Transformer depth per backbone family — see src/training/trainer.py's
+# _build_model() scratch-mode Config construction, and
+# scripts/run_cross_cohort_specificity.py's build_inference_model(), both of
+# which use these same depths (12 for wav2vec2/WavLM-base, 24 for XLS-R-300m).
+NUM_LAYERS = {"wav2vec2": 12, "wavlm": 12, "xlsr": 24}
 
-# ── Ablation variants ──────────────────────────────────────────────────────────
-ABLATION_GROUPS = {
-    "freeze": [
-        ("freeze=0  (all layers train)", {"freeze_layers": 0}),
-        ("freeze=2",                     {"freeze_layers": 2}),
-        ("freeze=4  [CURRENT]",          {"freeze_layers": 4}),
-        ("freeze=6",                     {"freeze_layers": 6}),
-        ("freeze=8",                     {"freeze_layers": 8}),
-        ("freeze=all  (SVM probe only)", {"freeze_layers": 24, "use_svm": True}),
-    ],
-    "loss": [
-        ("CrossEntropy",                 {"focal_gamma": 0.0, "label_smoothing": 0.0}),
-        ("FocalLoss γ=1",                {"focal_gamma": 1.0}),
-        ("FocalLoss γ=2  [CURRENT]",     {"focal_gamma": 2.0}),
-        ("FocalLoss γ=3",                {"focal_gamma": 3.0}),
-    ],
-    "decay": [
-        ("λ=1.0  (uniform LR)",          {"layerwise_lr_decay": 1.0}),
-        ("λ=0.9  [CURRENT]",             {"layerwise_lr_decay": 0.9}),
-        ("λ=0.8",                        {"layerwise_lr_decay": 0.8}),
-        ("λ=0.7",                        {"layerwise_lr_decay": 0.7}),
-    ],
-}
+
+def build_defaults(backbone: str, mode: str) -> dict:
+    """Was a fixed module-level dict (XLS-R finetune only) — now built per
+    backbone/mode so the "current" config those defaults represent still
+    makes sense (e.g. batch_size=8 was an XLS-R-specific memory
+    constraint; kept for now since it's a safe default across backbones,
+    but override with --batch_size if a specific backbone can handle more)."""
+    return dict(
+        backbone           = backbone,
+        mode               = mode,
+        exp                = "1",
+        num_epochs         = 8,
+        batch_size         = 8,
+        learning_rate      = 1e-5,
+        freeze_layers      = 4,           # current
+        focal_gamma        = 2.0,         # current
+        layerwise_lr_decay = 0.9,         # current
+        label_smoothing    = 0.1,
+        head_warmup_epochs = 1,
+        early_stop_patience= 3,
+        early_stop_metric  = "val_f1",
+        imbalance          = "weights",
+        warmup_steps       = 100,
+        use_svm            = True,
+    )
+
+
+def build_ablation_groups(backbone: str) -> dict:
+    """Was a fixed module-level dict with "freeze=all" hardcoded to 24
+    (XLS-R's layer count) — now computes the all-frozen variant from the
+    ACTUAL backbone's depth via NUM_LAYERS, so this is correct for
+    wav2vec2/WavLM (12 layers) too, not just XLS-R."""
+    num_layers = NUM_LAYERS[backbone]
+    return {
+        "freeze": [
+            ("freeze=0  (all layers train)", {"freeze_layers": 0}),
+            ("freeze=2",                     {"freeze_layers": 2}),
+            ("freeze=4  [CURRENT]",          {"freeze_layers": 4}),
+            ("freeze=6",                     {"freeze_layers": 6}),
+            ("freeze=8",                     {"freeze_layers": 8}),
+            (f"freeze=all ({num_layers}, SVM probe only)",
+             {"freeze_layers": num_layers, "use_svm": True}),
+        ],
+        "loss": [
+            ("CrossEntropy",                 {"focal_gamma": 0.0, "label_smoothing": 0.0}),
+            ("FocalLoss γ=1",                {"focal_gamma": 1.0}),
+            ("FocalLoss γ=2  [CURRENT]",     {"focal_gamma": 2.0}),
+            ("FocalLoss γ=3",                {"focal_gamma": 3.0}),
+        ],
+        "decay": [
+            ("λ=1.0  (uniform LR)",          {"layerwise_lr_decay": 1.0}),
+            ("λ=0.9  [CURRENT]",             {"layerwise_lr_decay": 0.9}),
+            ("λ=0.8",                        {"layerwise_lr_decay": 0.8}),
+            ("λ=0.7",                        {"layerwise_lr_decay": 0.7}),
+        ],
+    }
+
+
 
 CURRENT_MARKER = "[CURRENT]"
 
@@ -115,8 +162,8 @@ VARIANT_FOLDERS = {
 # PHASE 1 — Training
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_cmd(segment_dir, csv_path, run_out, overrides):
-    cfg = {**DEFAULTS, **overrides}
+def build_cmd(segment_dir, csv_path, run_out, overrides, defaults):
+    cfg = {**defaults, **overrides}
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_experiment.py"),
@@ -171,15 +218,22 @@ def _load_result(label, overrides, res_path, status="complete"):
     }
 
 
-def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
-    # factor_dir = ablation/freeze  →  run_out = ablation/freeze/freeze_4/
-    folder  = VARIANT_FOLDERS.get(label, _safe_label(label))
+def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run, defaults):
+    # factor_dir = ablation/<backbone>_<mode>/freeze  →  run_out = .../freeze/freeze_4/
+    # "freeze=all" now embeds the backbone-specific layer count (12 vs 24)
+    # in the label, so it won't exact-match VARIANT_FOLDERS's static key —
+    # normalize that one case explicitly rather than needing a static
+    # entry per possible layer count.
+    if label.startswith("freeze=all"):
+        folder = "freeze_all"
+    else:
+        folder = VARIANT_FOLDERS.get(label, _safe_label(label))
     run_out = factor_dir / folder
 
     # run_experiment.py appends the mode ("finetune") as a subfolder via run_label,
     # so results_summary.json lands at run_out/finetune/results_summary.json
     # run_experiment.py uses exp{exp_key}_mixed when no run_label is passed
-    res_path = run_out / f"exp{DEFAULTS['exp']}_mixed" / "results_summary.json"
+    res_path = run_out / f"exp{defaults['exp']}_mixed" / "results_summary.json"
 
     # ── Fast skip: check before spawning any subprocess ───────────────────
     if res_path.exists():
@@ -196,7 +250,7 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
         print("  [DRY RUN — not executed]")
         return {"label": label, "overrides": overrides, "status": "dry_run"}
 
-    cmd = build_cmd(segment_dir, csv_path, run_out, overrides)
+    cmd = build_cmd(segment_dir, csv_path, run_out, overrides, defaults)
 
     # Capture stderr so failures show the actual traceback
     result = subprocess.run(cmd, check=False, stderr=subprocess.PIPE, text=True)
@@ -217,9 +271,18 @@ def run_variant(label, overrides, segment_dir, csv_path, factor_dir, dry_run):
 
 
 def phase_run(args):
-    factors = list(ABLATION_GROUPS.keys()) if args.factor == "all" else [args.factor]
-    DEFAULTS["num_epochs"] = args.num_epochs
-    out = Path(args.output_dir)
+    defaults = build_defaults(args.backbone, args.mode)
+    ablation_groups = build_ablation_groups(args.backbone)
+    defaults["num_epochs"] = args.num_epochs
+
+    factors = list(ablation_groups.keys()) if args.factor == "all" else [args.factor]
+
+    # Namespaced by backbone/mode so multiple architectures can be ablated
+    # into the SAME --output_dir without overwriting each other — this was
+    # a real collision risk before: two backbones both writing to
+    # <output_dir>/freeze/freeze_4/ would silently clobber one another.
+    backbone_mode = f"{args.backbone}_{args.mode}"
+    out = Path(args.output_dir) / backbone_mode
     all_results = {}
 
     # Load existing results so partial runs can resume
@@ -230,14 +293,15 @@ def phase_run(args):
 
     for factor in factors:
         print(f"\n{'═'*62}")
-        print(f"  ABLATION: {factor.upper()}  |  backbone=XLS-R  |  exp=1")
+        print(f"  ABLATION: {factor.upper()}  |  backbone={args.backbone}  |  "
+              f"mode={args.mode}  |  exp=1")
         print("═"*62)
         factor_dir = out / factor
         factor_dir.mkdir(parents=True, exist_ok=True)
         rows = []
-        for label, overrides in ABLATION_GROUPS[factor]:
+        for label, overrides in ablation_groups[factor]:
             res = run_variant(label, overrides, args.segment_dir,
-                              args.csv_path, factor_dir, args.dry_run)
+                              args.csv_path, factor_dir, args.dry_run, defaults)
             rows.append(res)
             print(f"  ✓ test_f1={res.get('test_f1','?')}  "
                   f"test_auc={res.get('test_auc','?')}  "
@@ -279,20 +343,22 @@ def print_console(all_results):
             )
 
 
-def make_latex(factor_name, rows):
+def make_latex(factor_name, rows, backbone, mode):
+    backbone_label = {"wav2vec2": "wav2vec2", "wavlm": "WavLM", "xlsr": "XLS-R"}.get(backbone, backbone)
+    arch_str = f"{backbone_label} {mode}"
     captions = {
         "freeze": (
-            "Ablation: number of frozen Transformer layers "
-            "(Experiment~1, XLS-R finetune, all other settings fixed at defaults). "
+            f"Ablation: number of frozen Transformer layers "
+            f"(Experiment~1, {arch_str}, all other settings fixed at defaults). "
             "\\rowcolor{gray!15} = current pipeline configuration."
         ),
         "loss": (
-            "Ablation: loss function and Focal Loss concentration $\\gamma$ "
-            "(Experiment~1, XLS-R finetune)."
+            f"Ablation: loss function and Focal Loss concentration $\\gamma$ "
+            f"(Experiment~1, {arch_str})."
         ),
         "decay": (
-            "Ablation: layerwise learning-rate decay $\\lambda$ "
-            "(Experiment~1, XLS-R finetune). "
+            f"Ablation: layerwise learning-rate decay $\\lambda$ "
+            f"(Experiment~1, {arch_str}). "
             "$\\lambda=1.0$ = uniform learning rate across all layers."
         ),
     }
@@ -300,7 +366,7 @@ def make_latex(factor_name, rows):
         r"\begin{table}[h]",
         r"\centering",
         rf"\caption{{{captions.get(factor_name, factor_name)}}}",
-        rf"\label{{tab:ablation_{factor_name}}}",
+        rf"\label{{tab:ablation_{backbone}_{mode}_{factor_name}}}",
         r"\begin{tabular}{lcccccc}",
         r"\toprule",
         r"Configuration & Val F1 & Test F1 & Test AUC & Test Acc & SVM F1 & SVM AUC \\",
@@ -329,7 +395,7 @@ DISCUSSION_TEMPLATE = """
 
 The three most consequential hyperparameters for the finetune paradigm were
 validated against alternatives on Experiment~1 (binary CRS detection,
-XLS-R finetune, F1=0.696 at default settings) using a one-factor-at-a-time
+XLS-R finetune, FILL: F1 at default settings) using a one-factor-at-a-time
 protocol. All other training settings were held at the defaults reported in
 Section~\\ref{sec:training_config}.
 
@@ -339,7 +405,7 @@ test F1 (FILL) and test AUC (FILL).
 \\textbf{FILL: Describe pattern — does performance peak at 4, or does it
 monotonically improve/degrade?}
 The SVM probe on the all-frozen backbone achieved F1 FILL (AUC FILL),
-confirming that XLS-R's pretrained representations carry useful
+confirming that the backbone's pretrained representations carry useful
 clinical acoustic structure even without any backbone adaptation.
 
 \\paragraph{Loss function.}
@@ -368,10 +434,12 @@ producing a test F1 range of FILL across variants.
 
 
 def phase_report(args):
-    agg_path = Path(args.output_dir) / "ablation_results.json"
+    backbone_mode = f"{args.backbone}_{args.mode}"
+    agg_path = Path(args.output_dir) / backbone_mode / "ablation_results.json"
     if not agg_path.exists():
         print(f"  No results file found at {agg_path}.")
-        print("  Run Phase 1 first: python scripts/run_ablation.py --run ...")
+        print(f"  Run Phase 1 first: python scripts/run_ablation.py --run "
+              f"--backbone {args.backbone} --mode {args.mode} ...")
         sys.exit(1)
 
     with open(agg_path) as f:
@@ -379,11 +447,11 @@ def phase_report(args):
 
     print_console(all_results)
 
-    tables    = [make_latex(f, rows) for f, rows in all_results.items()]
+    tables    = [make_latex(f, rows, args.backbone, args.mode) for f, rows in all_results.items()]
     latex_out = (
         "% Requires \\usepackage{booktabs} and \\usepackage{colortbl}\n\n"
         + "\n\n".join(tables)
-        + DISCUSSION_TEMPLATE
+        + DISCUSSION_TEMPLATE.replace("XLS-R finetune", f"{args.backbone} {args.mode}")
     )
 
     print("\n\n% ════════════════════════════════════════════\n"
@@ -403,12 +471,18 @@ def phase_report(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Ablation study runner and reporter for Exp1 / XLS-R finetune."
+        description="Ablation study runner and reporter for Exp1, any backbone/mode."
     )
     mode_grp = parser.add_mutually_exclusive_group(required=True)
     mode_grp.add_argument("--run",    action="store_true", help="Phase 1: train variants")
     mode_grp.add_argument("--report", action="store_true", help="Phase 2: generate report")
 
+    parser.add_argument("--backbone", choices=list(NUM_LAYERS.keys()), default="xlsr",
+                        help="Which backbone to ablate. Determines the 'freeze=all' "
+                             "layer count (12 for wav2vec2/wavlm, 24 for xlsr) and the "
+                             "output namespace, so multiple backbones can share one "
+                             "--output_dir without colliding.")
+    parser.add_argument("--mode", choices=["scratch", "finetune"], default="finetune")
     parser.add_argument("--output_dir",  required=True,
                         help="Root directory for ablation outputs")
     parser.add_argument("--factor",
