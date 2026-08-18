@@ -136,3 +136,112 @@ def compute_patient_level_metrics(patient_df: pd.DataFrame,
     metrics = compute_metrics(labels, preds, probs, num_classes, split_name=key)
     metrics[f"{key}/n_patients"] = int(len(patient_df))
     return metrics
+
+
+def audio_types_from_samples(samples) -> List[str]:
+    """
+    Unlike patient ID (which needs filename parsing — see module docstring),
+    the audio column is already the third element of every
+    SinusitisDataset.samples tuple: (filepath, label, audio_col) — see
+    src/pipeline/dataset.py::SinusitisDataset.__init__. No parsing needed,
+    just pull it straight out, in the same shuffle=False order everything
+    else here depends on.
+    """
+    return [col for _fpath, _label, col in samples]
+
+
+def aggregate_to_patient_audiotype_level(probs: np.ndarray,
+                                          patient_ids: List[str],
+                                          audio_types: List[str],
+                                          labels: Optional[np.ndarray] = None) -> pd.DataFrame:
+    """
+    Patient-level aggregation, broken down BY AUDIO TYPE — the patient-
+    level analogue of src/training/metrics.py::evaluate_by_audio_type(),
+    which does this at the segment level only. Answers "for THIS
+    patient's vowel-only segments, what's the mean predicted
+    probability?" rather than pooling every segment together regardless
+    of which recording task it came from.
+
+    Groups by (ID, audio_col) for the individual-column breakdown (a, a1,
+    a2, a3, agua, brasero, dia, e, i, mesa, o, u — matching the segment-
+    level report's rows exactly), by (ID, group) for the grouped
+    breakdown (vowels/sustained/speech/tdu, via COL_TO_GROUP), and adds
+    an "overall" pseudo-type per patient pooling everything — same three-
+    tier structure the segment-level per-audio-type table already uses,
+    so a patient-level report can mirror it row-for-row.
+
+    Returns a long-format DataFrame: one row per (ID, audio_type), with
+    audio_type covering individual columns AND groups AND "overall" —
+    filter on the `level` column ("column" | "group" | "overall") to get
+    just one tier.
+    """
+    from src.pipeline.dataset import COL_TO_GROUP
+
+    n_classes = probs.shape[1]
+    base = {"ID": patient_ids, "audio_col": audio_types}
+    for c in range(n_classes):
+        base[f"p_class{c}"] = probs[:, c]
+    if labels is not None:
+        base["label"] = np.asarray(labels)
+    rec = pd.DataFrame(base)
+    rec["group"] = rec["audio_col"].map(lambda c: COL_TO_GROUP.get(c, "other"))
+
+    prob_cols = [f"p_class{c}" for c in range(n_classes)]
+
+    def _agg(df: pd.DataFrame, group_col: str, level: str) -> pd.DataFrame:
+        agg_dict = {c: "mean" for c in prob_cols}
+        out = df.groupby(["ID", group_col]).agg(agg_dict)
+        out["n_segments"] = df.groupby(["ID", group_col]).size()
+        if labels is not None:
+            label_nunique = df.groupby(["ID", group_col])["label"].nunique()
+            inconsistent = label_nunique[label_nunique > 1]
+            if len(inconsistent) > 0:
+                raise ValueError(
+                    f"Patient/audio-type combo(s) with inconsistent labels — "
+                    f"cannot aggregate safely: {list(inconsistent.index)}"
+                )
+            out["label"] = df.groupby(["ID", group_col])["label"].first()
+        out = out.reset_index().rename(columns={group_col: "audio_type"})
+        out["level"] = level
+        return out
+
+    by_column = _agg(rec, "audio_col", "column")
+    by_group  = _agg(rec, "group", "group")
+
+    overall = rec.copy()
+    overall["audio_type"] = "overall"
+    by_overall = _agg(overall, "audio_type", "overall")
+
+    return pd.concat([by_column, by_group, by_overall], ignore_index=True)
+
+
+def compute_patient_audiotype_metrics(patient_audiotype_df: pd.DataFrame,
+                                       num_classes: int,
+                                       split_name: str = "test") -> pd.DataFrame:
+    """
+    Per-audio-type patient-level accuracy/F1/AUC, one row per audio_type
+    — the patient-level analogue of the per-audio-type table in the
+    segment-level PDF report. Requires ground-truth `label` (present when
+    aggregate_to_patient_audiotype_level was called with labels — i.e.
+    Exp1, not Exp5's Sept/Tonsill).
+    """
+    if "label" not in patient_audiotype_df.columns:
+        return pd.DataFrame()
+
+    prob_cols = sorted([c for c in patient_audiotype_df.columns if c.startswith("p_class")])
+    rows = []
+    for audio_type, sub in patient_audiotype_df.groupby("audio_type"):
+        probs  = sub[prob_cols].values
+        preds  = probs.argmax(axis=1).tolist()
+        labels = sub["label"].astype(int).tolist()
+        m = compute_metrics(labels, preds, probs, num_classes,
+                             split_name=f"{split_name}/patient_level/{audio_type}")
+        rows.append({
+            "audio_type":  audio_type,
+            "level":       sub["level"].iloc[0],
+            "n_patients":  len(sub),
+            "accuracy":    m.get(f"{split_name}/patient_level/{audio_type}/accuracy"),
+            "f1_macro":    m.get(f"{split_name}/patient_level/{audio_type}/f1_macro"),
+            "roc_auc":     m.get(f"{split_name}/patient_level/{audio_type}/roc_auc"),
+        })
+    return pd.DataFrame(rows)
