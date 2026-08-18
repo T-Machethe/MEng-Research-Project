@@ -712,9 +712,21 @@ class Trainer:
                     log.info(f"  Early stopping at epoch {epoch}.")
                     break
  
-        # ── Final test evaluation ─────────────────────────────────────────
+        # ── Final evaluation against the BEST checkpoint ────────────────────
+        # Bug fix: val_metrics from the loop above reflects whatever epoch
+        # the loop happened to stop at — with early stopping, that can be
+        # `patience` epochs AFTER the actual best checkpoint. test_metrics
+        # was already correctly computed against the reloaded best_model.pt
+        # below; val_metrics was not, meaning the val/* numbers previously
+        # saved into results_summary.json didn't necessarily correspond to
+        # the same model weights as test/* — silently inconsistent whenever
+        # early stopping didn't fire on the very last epoch. Re-evaluating
+        # val here, in the same place test already was, fixes that and is
+        # what patient-level val metrics (added below) now depend on being
+        # correct.
         log.info("\\n  Loading best model for test evaluation...")
         self._load("best_model.pt")
+        val_metrics  = self._evaluate(val_loader, "val")
         test_metrics = self._evaluate(test_loader, "test")
  
         # ── Step 5a: Threshold calibration (binary only) ──────────────────
@@ -738,11 +750,12 @@ class Trainer:
             except Exception as e:
                 log.warning(f"  Threshold calibration failed (non-fatal): {e}")
  
-        # ── Step 5b: Patient-level vote aggregation ───────────────────────
-        # patient_ids are stored by the dataloader if present in the batch
-        # For now we use a placeholder — requires patient_ids in test batches
-        # (see dataloader extension note in eval_utils.py)
-        # This will produce useful results once patient_id is added to batches.
+        # ── Patient-level aggregation ────────────────────────────────────
+        # Handled by src/experiments/base.py::_add_patient_level_metrics(),
+        # called after this returns — recovers patient identity from
+        # segment filenames rather than needing it threaded through
+        # batches, since val/test loaders here are shuffle=False and
+        # therefore order-aligned with their underlying dataset.samples.
  
         # ── Print epoch-by-epoch training summary ─────────────────────────
         log.info(f"\\n{'═'*72}")
