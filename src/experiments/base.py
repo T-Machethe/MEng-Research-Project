@@ -204,92 +204,113 @@ class BaseExperiment(ABC):
             test_loader=self.test_loader,
         )
 
-        self._add_patient_level_test_metrics()
+        self._add_patient_level_metrics()
 
         return self.results
 
-    def _add_patient_level_test_metrics(self):
+    def _add_patient_level_metrics(self):
         """
-        Examiner feedback: segment-pooled test metrics alone are
-        misleading — patients with more segments dominate the pooled
-        number, and segments from one patient are not independent. This
-        adds a PATIENT-level view of the test set alongside the existing
-        segment-level one, computed from the same predictions Trainer
-        already produced (no re-inference needed).
+        Examiner feedback: segment-pooled metrics alone are misleading —
+        patients with more segments dominate the pooled number, and
+        segments from one patient are not independent. Adds a PATIENT-
+        level view alongside the existing segment-level one, computed
+        from predictions Trainer already produced (no re-inference
+        needed here — see scripts/run_patient_level_aggregation.py for
+        why VAL specifically needed a trainer.py fix first: val/all_probs
+        used to reflect whatever epoch early stopping happened to land
+        on, not necessarily the best checkpoint; test/all_probs was
+        already correctly reloaded-checkpoint-aligned).
 
-        Silently skipped (with a log message) for dataset types that
-        don't expose `.samples` in the "ID{n}_ses{s}_{col}_seg{i}.pt"
-        filename-parseable form — currently just PairedDataset (Exp4),
-        which is out of scope for this addition.
+        Runs for BOTH val and test — same logic, same loader/dataset
+        pairing per split — plus the SVM head for both, when present, and
+        a patient-level, per-audio-type breakdown for both. Silently
+        skipped (with a log message) for dataset types that don't expose
+        `.samples` in the "ID{n}_ses{s}_{col}_seg{i}.pt" filename-
+        parseable form — currently just PairedDataset (Exp4), out of
+        scope for this addition.
         """
-        test_ds = getattr(self.test_loader, "dataset", None)
-        has_probs = "test/all_probs" in self.results and "test/all_labels" in self.results
-
-        if test_ds is None or not hasattr(test_ds, "samples") or not has_probs:
-            log.info(
-                "  [patient-level] Skipped — dataset type or stored "
-                "predictions don't support filename-based patient-ID "
-                "recovery (expected for Exp4/PairedDataset)."
-            )
-            return
-
         from src.training.patient_metrics import (
-            patient_ids_from_samples, aggregate_to_patient_level,
-            compute_patient_level_metrics,
+            patient_ids_from_samples, audio_types_from_samples,
+            aggregate_to_patient_level, compute_patient_level_metrics,
+            aggregate_to_patient_audiotype_level, compute_patient_audiotype_metrics,
         )
 
-        probs  = np.asarray(self.results["test/all_probs"])
-        labels = np.asarray(self.results["test/all_labels"])
-        patient_ids = patient_ids_from_samples(test_ds.samples)
+        for split_name, loader in (("test", self.test_loader), ("val", self.val_loader)):
+            ds = getattr(loader, "dataset", None)
+            has_probs = f"{split_name}/all_probs" in self.results and f"{split_name}/all_labels" in self.results
 
-        assert len(patient_ids) == len(probs) == len(labels), (
-            f"[patient-level] length mismatch: "
-            f"{len(patient_ids)} patient_ids vs {len(probs)} probs vs "
-            f"{len(labels)} labels — test_loader must be shuffle=False "
-            f"and iterated exactly once for this alignment to hold."
-        )
-
-        patient_df = aggregate_to_patient_level(probs, patient_ids, labels)
-        patient_metrics = compute_patient_level_metrics(
-            patient_df, self.num_classes, split_name="test"
-        )
-
-        log.info(f"\n  [patient-level] Test set: {len(patient_df)} patients "
-                  f"(vs {len(probs)} segments)")
-        for k in ("test/patient_level/accuracy", "test/patient_level/f1_macro"):
-            if k in patient_metrics:
-                log.info(f"    {k:<35} {patient_metrics[k]:.4f}")
-
-        self.results.update(patient_metrics)
-        self.results["test/patient_level/per_patient"] = patient_df.to_dict(orient="records")
-
-        # ── Same treatment for the SVM head, when present ──────────────────
-        # SVM evaluates the exact same test_loader (same order, same
-        # patient_ids computed above) — see src/training/svm_classifier.py
-        # ::train_svm(), which is always called with the shared
-        # train/val/test_loader from this same run(). No separate ID
-        # recovery needed.
-        svm_results = self.results.get("svm")
-        if svm_results and "test/all_probs" in svm_results and "test/all_labels" in svm_results:
-            svm_probs  = np.asarray(svm_results["test/all_probs"])
-            svm_labels = np.asarray(svm_results["test/all_labels"])
-            if len(svm_probs) == len(patient_ids):
-                svm_patient_df = aggregate_to_patient_level(svm_probs, patient_ids, svm_labels)
-                svm_patient_metrics = compute_patient_level_metrics(
-                    svm_patient_df, self.num_classes, split_name="test"
+            if ds is None or not hasattr(ds, "samples") or not has_probs:
+                log.info(
+                    f"  [patient-level][{split_name}] Skipped — dataset type or "
+                    f"stored predictions don't support filename-based patient-ID "
+                    f"recovery (expected for Exp4/PairedDataset)."
                 )
-                log.info(f"\n  [patient-level][SVM] Test set: {len(svm_patient_df)} patients")
-                for k in ("test/patient_level/accuracy", "test/patient_level/f1_macro"):
-                    if k in svm_patient_metrics:
-                        log.info(f"    {k:<35} {svm_patient_metrics[k]:.4f}")
-                svm_results.update(svm_patient_metrics)
-                svm_results["test/patient_level/per_patient"] = svm_patient_df.to_dict(orient="records")
-            else:
-                log.warning(
-                    f"  [patient-level][SVM] Skipped — {len(svm_probs)} SVM "
-                    f"predictions vs {len(patient_ids)} patient_ids "
-                    f"(unexpected length mismatch)."
-                )
+                continue
+
+            probs  = np.asarray(self.results[f"{split_name}/all_probs"])
+            labels = np.asarray(self.results[f"{split_name}/all_labels"])
+            patient_ids = patient_ids_from_samples(ds.samples)
+            audio_types = audio_types_from_samples(ds.samples)
+
+            assert len(patient_ids) == len(probs) == len(labels), (
+                f"[patient-level][{split_name}] length mismatch: "
+                f"{len(patient_ids)} patient_ids vs {len(probs)} probs vs "
+                f"{len(labels)} labels — loader must be shuffle=False "
+                f"and iterated exactly once for this alignment to hold."
+            )
+
+            patient_df = aggregate_to_patient_level(probs, patient_ids, labels)
+            patient_metrics = compute_patient_level_metrics(
+                patient_df, self.num_classes, split_name=split_name
+            )
+
+            log.info(f"\n  [patient-level][{split_name}] {len(patient_df)} patients "
+                      f"(vs {len(probs)} segments)")
+            for k in (f"{split_name}/patient_level/accuracy", f"{split_name}/patient_level/f1_macro"):
+                if k in patient_metrics:
+                    log.info(f"    {k:<35} {patient_metrics[k]:.4f}")
+
+            self.results.update(patient_metrics)
+            self.results[f"{split_name}/patient_level/per_patient"] = patient_df.to_dict(orient="records")
+
+            # ── Patient-level, per-audio-type breakdown ─────────────────────
+            at_df = aggregate_to_patient_audiotype_level(probs, patient_ids, audio_types, labels)
+            at_metrics = compute_patient_audiotype_metrics(at_df, self.num_classes, split_name=split_name)
+            self.results[f"{split_name}/patient_level/by_audio_type"] = at_df.to_dict(orient="records")
+            self.results[f"{split_name}/patient_level/by_audio_type_metrics"] = at_metrics.to_dict(orient="records")
+
+            # ── Same treatment for the SVM head, when present ───────────────
+            # SVM evaluates the exact same loader (same order, same
+            # patient_ids/audio_types computed above) — see
+            # src/training/svm_classifier.py::train_svm(), called with the
+            # shared train/val/test_loader from this same run(). No
+            # separate ID recovery needed.
+            svm_results = self.results.get("svm")
+            if svm_results and f"{split_name}/all_probs" in svm_results and f"{split_name}/all_labels" in svm_results:
+                svm_probs  = np.asarray(svm_results[f"{split_name}/all_probs"])
+                svm_labels = np.asarray(svm_results[f"{split_name}/all_labels"])
+                if len(svm_probs) == len(patient_ids):
+                    svm_patient_df = aggregate_to_patient_level(svm_probs, patient_ids, svm_labels)
+                    svm_patient_metrics = compute_patient_level_metrics(
+                        svm_patient_df, self.num_classes, split_name=split_name
+                    )
+                    log.info(f"\n  [patient-level][SVM][{split_name}] {len(svm_patient_df)} patients")
+                    for k in (f"{split_name}/patient_level/accuracy", f"{split_name}/patient_level/f1_macro"):
+                        if k in svm_patient_metrics:
+                            log.info(f"    {k:<35} {svm_patient_metrics[k]:.4f}")
+                    svm_results.update(svm_patient_metrics)
+                    svm_results[f"{split_name}/patient_level/per_patient"] = svm_patient_df.to_dict(orient="records")
+
+                    svm_at_df = aggregate_to_patient_audiotype_level(svm_probs, patient_ids, audio_types, svm_labels)
+                    svm_at_metrics = compute_patient_audiotype_metrics(svm_at_df, self.num_classes, split_name=split_name)
+                    svm_results[f"{split_name}/patient_level/by_audio_type"] = svm_at_df.to_dict(orient="records")
+                    svm_results[f"{split_name}/patient_level/by_audio_type_metrics"] = svm_at_metrics.to_dict(orient="records")
+                else:
+                    log.warning(
+                        f"  [patient-level][SVM][{split_name}] Skipped — {len(svm_probs)} SVM "
+                        f"predictions vs {len(patient_ids)} patient_ids "
+                        f"(unexpected length mismatch)."
+                    )
 
     def report(self):
         """Save and print a human-readable results summary."""
