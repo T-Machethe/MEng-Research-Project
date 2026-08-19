@@ -511,8 +511,15 @@ def main():
 
     if rows_for_comparison_table:
         comparison_df = pd.DataFrame(rows_for_comparison_table)
-        comparison_df.to_csv(output_dir / "exp1_patient_level_comparison.csv", index=False)
-        log.info(f"\n{comparison_df.to_string(index=False)}")
+        comparison_df.to_csv(output_dir / "exp1_patient_level_comparison.csv",
+                              index=False, float_format="%.4f")
+        # float_format forces consistent decimal places across every numeric
+        # column — pandas' default to_string() otherwise prints the MINIMAL
+        # digits needed per value, so a mathematically exact 9/10=0.9000
+        # (accuracy, small n_patients) prints as "0.9" right next to an
+        # F1 score like "0.89899" that doesn't reduce to a short decimal —
+        # correct values, inconsistent-looking table.
+        log.info(f"\n{comparison_df.to_string(index=False, float_format='%.4f')}")
 
     log.info(f"\n  Results saved -> {output_dir}")
 
