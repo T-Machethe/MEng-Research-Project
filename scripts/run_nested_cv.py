@@ -328,15 +328,38 @@ def run_nested_cv_for_backbone(
     scratch_dir: _Path, output_dir: _Path, outer_folds: int, inner_folds: int,
     neural_grid: List[Dict], svm_grid: List[Dict], batch_size: int,
     inner_epochs: int, outer_epochs: int, device: torch.device, seed: int,
-    save_outer_models: bool, run_svm: bool,
+    save_outer_models: bool, run_svm: bool, overwrite: bool = False,
 ) -> Dict:
     log.info(f"\n{'='*70}\n  NESTED CV — {job_name}\n{'='*70}")
+
+    # ── Resume: whole-backbone short-circuit ────────────────────────────────
+    # Nested CV is the most expensive step in this pipeline — a multi-hour
+    # Colab run WILL eventually hit a disconnect. Without this, re-running
+    # the cell restarts every backbone from outer fold 0, discarding
+    # everything already computed. --overwrite forces a clean rerun.
+    final_summary_path = output_dir / f"{job_name}_nested_cv.json"
+    if final_summary_path.exists() and not overwrite:
+        log.info(f"  ↩  SKIP (already complete): {final_summary_path}")
+        log.info(f"     Pass --overwrite to force a full rerun.")
+        with open(final_summary_path) as f:
+            return json.load(f)
 
     outer_fold_ids = patient_group_kfold(filtered_df, n_splits=outer_folds,
                                           seed=seed, stratify_col="GROUP")
     fold_results = []
 
     for fold_i, (outer_train_ids, outer_test_ids) in enumerate(outer_fold_ids):
+        # ── Resume: per-outer-fold ───────────────────────────────────────────
+        # Each outer fold is roughly total_time/outer_folds — checkpointing
+        # here means a disconnect partway through fold 3 of 5 only loses
+        # fold 3's in-progress work, not folds 0-2's completed results.
+        fold_path = output_dir / f"{job_name}_fold{fold_i}.json"
+        if fold_path.exists() and not overwrite:
+            log.info(f"\n  ↩  SKIP outer fold {fold_i+1}/{outer_folds} (already complete): {fold_path}")
+            with open(fold_path) as f:
+                fold_results.append(json.load(f))
+            continue
+
         t0 = time.time()
         log.info(f"\n{'─'*70}\n  {job_name} — OUTER FOLD {fold_i+1}/{outer_folds}\n{'─'*70}")
 
@@ -436,6 +459,13 @@ def run_nested_cv_for_backbone(
 
         fold_results.append(fold_record)
 
+        # ── Persist this fold immediately — this IS the resume checkpoint.
+        # Written before touching the next fold, so a disconnect right after
+        # this line still preserves fold_i's completed work.
+        with open(fold_path, "w") as f:
+            json.dump(fold_record, f, indent=2, cls=_NumpyEncoder)
+        log.info(f"  Fold {fold_i} checkpointed -> {fold_path}")
+
         if not save_outer_models:
             shutil.rmtree(final_output_dir, ignore_errors=True)
 
@@ -528,6 +558,11 @@ def main():
     parser.add_argument("--save_outer_models", action="store_true",
                          help="Persist each outer fold's final model to --output_dir (Drive). "
                               "Off by default — outer_folds × backbones checkpoints add up fast.")
+    parser.add_argument("--overwrite", action="store_true",
+                         help="Ignore existing per-fold and per-backbone checkpoints and "
+                              "rerun everything from scratch. Off by default — re-running this "
+                              "cell after a disconnect resumes from the last completed outer "
+                              "fold per backbone instead of restarting.")
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--est_inner_min", type=float, default=8.0)
     parser.add_argument("--est_outer_min", type=float, default=15.0)
@@ -569,7 +604,7 @@ def main():
             args.segment_dir, project_root, scratch_dir, output_dir,
             args.outer_folds, args.inner_folds, neural_grid, svm_grid,
             args.batch_size, args.inner_epochs, args.outer_epochs, device,
-            args.seed, args.save_outer_models, not args.no_svm,
+            args.seed, args.save_outer_models, not args.no_svm, args.overwrite,
         )
         all_summaries[job_name] = summary
 
