@@ -322,6 +322,28 @@ def two_way_patient_split(df: pd.DataFrame, val_size: float, seed: int,
     return df[df["ID"].isin(train_ids)].copy(), df[df["ID"].isin(val_ids)].copy()
 
 
+def config_fingerprint(neural_grid: List[Dict], svm_grid: List[Dict],
+                        outer_folds: int, inner_folds: int, seed: int,
+                        inner_epochs: int, outer_epochs: int) -> Dict:
+    """
+    Captures every setting that determines whether a checkpointed fold is
+    actually reusable for THIS run, vs. a different run that happens to
+    share the same --output_dir. Resume only checks file existence — it
+    has no way to know whether --grid_json, --outer_folds, --inner_folds,
+    or --seed changed since that checkpoint was written (e.g. across
+    Colab sessions where the grid gets narrowed further to cut cost).
+    Silently reusing a fold computed under different settings would mix
+    incompatible folds into one aggregated estimate with no warning —
+    this fingerprint is compared on every resume so that mismatch is
+    caught and made loud instead.
+    """
+    return {
+        "neural_grid": neural_grid, "svm_grid": svm_grid,
+        "outer_folds": outer_folds, "inner_folds": inner_folds, "seed": seed,
+        "inner_epochs": inner_epochs, "outer_epochs": outer_epochs,
+    }
+
+
 def run_nested_cv_for_backbone(
     job_name: str, backbone_type: str, mode: str, pretrained: Optional[str],
     filtered_df: pd.DataFrame, label_fn, segment_dir: str, project_root: _Path,
@@ -332,6 +354,9 @@ def run_nested_cv_for_backbone(
 ) -> Dict:
     log.info(f"\n{'='*70}\n  NESTED CV — {job_name}\n{'='*70}")
 
+    fingerprint = config_fingerprint(neural_grid, svm_grid, outer_folds,
+                                      inner_folds, seed, inner_epochs, outer_epochs)
+
     # ── Resume: whole-backbone short-circuit ────────────────────────────────
     # Nested CV is the most expensive step in this pipeline — a multi-hour
     # Colab run WILL eventually hit a disconnect. Without this, re-running
@@ -339,10 +364,19 @@ def run_nested_cv_for_backbone(
     # everything already computed. --overwrite forces a clean rerun.
     final_summary_path = output_dir / f"{job_name}_nested_cv.json"
     if final_summary_path.exists() and not overwrite:
-        log.info(f"  ↩  SKIP (already complete): {final_summary_path}")
-        log.info(f"     Pass --overwrite to force a full rerun.")
         with open(final_summary_path) as f:
-            return json.load(f)
+            existing = json.load(f)
+        if existing.get("_config_fingerprint") == fingerprint:
+            log.info(f"  ↩  SKIP (already complete, same config): {final_summary_path}")
+            log.info(f"     Pass --overwrite to force a full rerun.")
+            return existing
+        log.warning(
+            f"  ⚠ {final_summary_path} exists but was computed under DIFFERENT "
+            f"settings (grid/fold-count/seed/epochs changed since that run). "
+            f"Treating as stale and recomputing this backbone from scratch — "
+            f"reusing it would silently mix incompatible folds into one "
+            f"estimate. Pass --overwrite to suppress this check entirely."
+        )
 
     outer_fold_ids = patient_group_kfold(filtered_df, n_splits=outer_folds,
                                           seed=seed, stratify_col="GROUP")
@@ -355,13 +389,22 @@ def run_nested_cv_for_backbone(
         # fold 3's in-progress work, not folds 0-2's completed results.
         fold_path = output_dir / f"{job_name}_fold{fold_i}.json"
         if fold_path.exists() and not overwrite:
-            log.info(f"\n  ↩  SKIP outer fold {fold_i+1}/{outer_folds} (already complete): {fold_path}")
             with open(fold_path) as f:
-                fold_results.append(json.load(f))
-            continue
+                cached_fold = json.load(f)
+            if cached_fold.get("_config_fingerprint") == fingerprint:
+                log.info(f"\n  ↩  SKIP outer fold {fold_i+1}/{outer_folds} "
+                         f"(already complete, same config): {fold_path}")
+                fold_results.append(cached_fold)
+                continue
+            log.warning(
+                f"\n  ⚠ {fold_path} exists but was computed under DIFFERENT "
+                f"settings — recomputing fold {fold_i+1} instead of silently "
+                f"reusing it. Pass --overwrite to suppress this check."
+            )
 
         t0 = time.time()
         log.info(f"\n{'─'*70}\n  {job_name} — OUTER FOLD {fold_i+1}/{outer_folds}\n{'─'*70}")
+
 
         outer_train_df = filtered_df[filtered_df["ID"].isin(outer_train_ids)]
         outer_test_df  = filtered_df[filtered_df["ID"].isin(outer_test_ids)]
@@ -461,7 +504,10 @@ def run_nested_cv_for_backbone(
 
         # ── Persist this fold immediately — this IS the resume checkpoint.
         # Written before touching the next fold, so a disconnect right after
-        # this line still preserves fold_i's completed work.
+        # this line still preserves fold_i's completed work. Fingerprint
+        # embedded so a future resume can tell whether this was computed
+        # under the same settings currently in effect.
+        fold_record["_config_fingerprint"] = fingerprint
         with open(fold_path, "w") as f:
             json.dump(fold_record, f, indent=2, cls=_NumpyEncoder)
         log.info(f"  Fold {fold_i} checkpointed -> {fold_path}")
@@ -474,6 +520,7 @@ def run_nested_cv_for_backbone(
     neural_accs = [f["outer_test_metrics"].get("outer_test/patient_level/accuracy", np.nan) for f in fold_results]
     summary = {
         "job_name": job_name, "outer_folds": outer_folds, "inner_folds": inner_folds,
+        "_config_fingerprint": fingerprint,
         "neural_patient_f1_mean": float(np.nanmean(neural_f1s)),
         "neural_patient_f1_std":  float(np.nanstd(neural_f1s)),
         "neural_patient_acc_mean": float(np.nanmean(neural_accs)),
