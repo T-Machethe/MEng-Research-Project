@@ -81,6 +81,7 @@ import logging
 import shutil
 import sys
 import time
+from datetime import datetime
 from pathlib import Path as _Path
 from typing import Dict, List, Optional, Tuple
 
@@ -634,6 +635,33 @@ def main():
     project_root = _Path(args.project_root)
     output_dir.mkdir(parents=True, exist_ok=True)
     scratch_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Persistent training log ──────────────────────────────────────────────
+    # Attached to the ROOT logger (not just this module's), so it captures
+    # EVERYTHING that gets logged during the run — including trainer.py's
+    # per-epoch [TRAIN]/[VAL] lines, "New best val_f1" markers, per-audio-
+    # type tables, and every fold/backbone boundary — not just this script's
+    # own high-level messages. Written to --output_dir (Drive), so it
+    # survives a disconnect the same way the JSON checkpoints do. Opened in
+    # append mode: re-running across sessions keeps extending the SAME file
+    # rather than overwriting the history from earlier sessions, so the full
+    # multi-session narrative stays in one place. A banner is written at the
+    # start of every invocation so it's easy to see where one session's
+    # output ends and the next begins when reading it back.
+    log_path = output_dir / "nested_cv_training_log.txt"
+    file_handler = logging.FileHandler(log_path, mode="a")
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(message)s", datefmt="%H:%M:%S"))
+    logging.getLogger().addHandler(file_handler)
+
+    log.info(f"\n{'#'*70}")
+    log.info(f"#  NEW SESSION — {datetime.now():%Y-%m-%d %H:%M:%S}")
+    log.info(f"#  backbones={[j[0] for j in jobs]}")
+    log.info(f"#  outer_folds={args.outer_folds}  inner_folds={args.inner_folds}  "
+             f"seed={args.seed}  overwrite={args.overwrite}")
+    log.info(f"#  neural_grid={neural_grid}")
+    log.info(f"{'#'*70}")
+    log.info(f"  Full training log -> {log_path}")
 
     # Reuses Exp1CRSvsControl's OWN filtering — guarantees this matches
     # exactly what Exp1's single train/val/test run used, per
