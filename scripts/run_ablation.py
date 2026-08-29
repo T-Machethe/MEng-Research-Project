@@ -14,10 +14,16 @@ PHASE 2 (--report): read ablation_results.json, print tables, write LaTeX
 
 Backbone/mode scoping
 ────────────────────────
-Originally hardcoded to XLS-R finetune only. Now takes --backbone/--mode,
-and results are namespaced under <output_dir>/<backbone>_<mode>/<factor>/
-so ablating multiple architectures (e.g. your nested-CV shortlist) into
-the SAME --output_dir doesn't collide — each backbone/mode gets its own
+Was hardcoded to XLS-R finetune only, then to a required --backbone/--mode
+flag pair with no default reflecting your actual selected candidate. Now
+defaults to shortlist.json's top-scoring candidate (from
+scripts/select_shortlist.py, via --results_dir) when neither is given —
+never a hardcoded value. Results are namespaced under
+<output_dir>/<backbone>_<mode>/<factor>/ so ablating multiple
+architectures into the SAME --output_dir doesn't collide (e.g. a tied
+shortlist, where two candidates score identically and both are worth
+ablating rather than picking one by an arbitrary tie-break) — each
+backbone/mode gets its own
 subtree and its own ablation_results.json. --report also takes
 --backbone/--mode to pick which subtree to read.
 
@@ -477,12 +483,21 @@ def main():
     mode_grp.add_argument("--run",    action="store_true", help="Phase 1: train variants")
     mode_grp.add_argument("--report", action="store_true", help="Phase 2: generate report")
 
-    parser.add_argument("--backbone", choices=list(NUM_LAYERS.keys()), default="xlsr",
-                        help="Which backbone to ablate. Determines the 'freeze=all' "
-                             "layer count (12 for wav2vec2/wavlm, 24 for xlsr) and the "
-                             "output namespace, so multiple backbones can share one "
-                             "--output_dir without colliding.")
-    parser.add_argument("--mode", choices=["scratch", "finetune"], default="finetune")
+    parser.add_argument("--backbone", choices=list(NUM_LAYERS.keys()), default=None,
+                        help="Which backbone to ablate. If omitted (along with --mode), "
+                             "defaults to shortlist.json's top-scoring candidate (see "
+                             "--results_dir) rather than any hardcoded value. Determines "
+                             "the 'freeze=all' layer count (12 for wav2vec2/wavlm, 24 for "
+                             "xlsr) and the output namespace, so multiple backbones can "
+                             "share one --output_dir without colliding.")
+    parser.add_argument("--mode", choices=["scratch", "finetune"], default=None,
+                        help="Must be given together with --backbone, or omitted "
+                             "together with it — see --backbone.")
+    parser.add_argument("--results_dir", type=str, default=None,
+                        help="Root containing shortlist.json (written by "
+                             "scripts/select_shortlist.py), used to source "
+                             "--backbone/--mode when neither is given explicitly. "
+                             "Required in that case; unused if both are given.")
     parser.add_argument("--output_dir",  required=True,
                         help="Root directory for ablation outputs")
     parser.add_argument("--factor",
@@ -497,6 +512,49 @@ def main():
                         help="Path to write LaTeX output file")
 
     args = parser.parse_args()
+
+    # ── Source --backbone/--mode from shortlist.json when neither is given ──
+    # Never silently falls back to a hardcoded value (that was exactly the
+    # bug being fixed here — see module docstring history). Explicit
+    # --backbone/--mode always win; a PARTIAL override (only one of the two
+    # given) is rejected rather than guessed at, since mixing an explicit
+    # backbone with an auto-derived mode (or vice versa) could silently
+    # produce a pairing that was never actually validated together.
+    if (args.backbone is None) != (args.mode is None):
+        parser.error("--backbone and --mode must be given together, or neither "
+                      "given (to source both from shortlist.json via --results_dir) "
+                      "— specifying only one is rejected rather than guessed at.")
+
+    if args.backbone is None and args.mode is None:
+        if not args.results_dir:
+            parser.error("--results_dir is required to source --backbone/--mode "
+                          "from shortlist.json when neither is given explicitly.")
+        shortlist_path = Path(args.results_dir) / "shortlist.json"
+        if not shortlist_path.exists():
+            parser.error(f"{shortlist_path} not found. Run "
+                          f"scripts/select_shortlist.py first, or specify "
+                          f"--backbone/--mode explicitly to skip this.")
+        with open(shortlist_path) as f:
+            shortlist_data = json.load(f)
+        selected = shortlist_data.get("selected", [])
+        if not selected:
+            parser.error(f"{shortlist_path} has an empty 'selected' list — nothing "
+                         f"to default to. Run select_shortlist.py against complete "
+                         f"Exp1+Exp5 results first, or specify --backbone/--mode "
+                         f"explicitly.")
+        # selected[0] is always the single globally top-scoring candidate,
+        # regardless of --no_family_pair — confirmed directly from
+        # select_shortlist.py::select_shortlist()'s construction (the
+        # family-pairing branch's first entry is the family with the
+        # highest max-score, sorted descending within it; the no-pairing
+        # branch sorts all candidates descending directly). Entries after
+        # index 0 are NOT reliably rank-ordered by score once family-pairing
+        # is active, so only index 0 is used here.
+        top_job = selected[0]
+        args.backbone, args.mode = top_job.rsplit("_", 1)
+        print(f"[run_ablation] --backbone/--mode not specified — sourced from "
+              f"{shortlist_path}'s top-scoring candidate: "
+              f"--backbone {args.backbone} --mode {args.mode}")
 
     if args.run:
         if not args.segment_dir or not args.csv_path:
