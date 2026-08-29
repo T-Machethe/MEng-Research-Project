@@ -74,6 +74,7 @@ plt.rcParams.update({
     "grid.linewidth":    0.5,
     "text.color":        TEXT,
     "font.family":       "sans-serif",
+    "font.size": 14,
     "legend.facecolor":  PANEL,
     "legend.edgecolor":  BORDER,
     "boxplot.whiskerprops.color":  MUTED,
@@ -521,44 +522,17 @@ CHANNEL_COLORS = {
 
 
 def plot_patient_session_counts(df: pd.DataFrame):
+    """
+    Non-empty recordings per audio task. Patient counts and per-session
+    recording counts are already reported in Table~\\ref{tab:eda_summary_table}
+    (eda_dataset_summary.csv) and are not re-plotted here to avoid duplicating
+    the same numbers in two different formats.
+    """
     df = df.copy()
-    df["_group"] = df["GROUP"].map(GROUP_MAP).fillna(df["GROUP"])
-    audio_cols   = [c for c in COLUMN_TO_SUBFOLDER if c in df.columns]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6), facecolor=BG)
-    fig.suptitle("Dataset Structure — Patients, Sessions, Recordings",
-                 fontsize=13, color=TEXT, y=1.02)
+    fig, ax = plt.subplots(figsize=(12, 6), facecolor=BG)
+    fig.suptitle("Non-empty Recordings per Audio Task", fontsize=16, color=TEXT, y=1.02)
 
-    # Panel 1: unique patients per group
-    ax = axes[0]
-    pat_counts = df.groupby("_group")["ID"].nunique().reindex(GROUPS).fillna(0)
-    colors     = [PALETTE.get(g, "#90CAF9") for g in GROUPS]
-    bars       = ax.bar(GROUPS, pat_counts.values, color=colors, alpha=0.85)
-    for bar, val in zip(bars, pat_counts.values):
-        ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.3,
-                str(int(val)), ha="center", va="bottom",
-                fontsize=11, color=TEXT, fontweight="bold")
-    ax.set_title("Unique Patients per Group", fontsize=11, color=TEXT, pad=8)
-    ax.set_ylabel("Patient Count", fontsize=9); ax.grid(True,axis="y",linewidth=0.4)
-
-    # Panel 2: recordings per session per group
-    ax = axes[1]
-    session_counts = df.groupby(["_group","session"]).size().unstack(fill_value=0)
-    sessions   = sorted(session_counts.columns)
-    x = np.arange(len(GROUPS)); w = 0.25
-    ses_colors = ["#4FC3F7","#81C784","#FFB74D"]
-    for si, (ses, sc) in enumerate(zip(sessions, ses_colors)):
-        vals = [session_counts.loc[g, ses] if g in session_counts.index else 0
-                for g in GROUPS]
-        ax.bar(x + si*w, vals, w, label=f"Session {ses}",
-               color=sc, alpha=0.85)
-    ax.set_title("Recordings per Session per Group", fontsize=11, color=TEXT, pad=8)
-    ax.set_xticks(x + w); ax.set_xticklabels(GROUPS, fontsize=10)
-    ax.set_ylabel("Recording Count", fontsize=9)
-    ax.legend(fontsize=8); ax.grid(True,axis="y",linewidth=0.4)
-
-    # Panel 3: non-empty cells per audio channel
-    ax = axes[2]
     cols_ord = [c for grp in CHANNEL_GROUPS.values() for c in grp if c in df.columns]
     ch_vals  = [int(df[c].notna().sum()) for c in cols_ord]
     ch_colors = []
@@ -568,18 +542,18 @@ def plot_patient_session_counts(df: pd.DataFrame):
                 ch_colors.append(CHANNEL_COLORS[grp_name]); break
     bars = ax.bar(cols_ord, ch_vals, color=ch_colors, alpha=0.85)
     for bar, val in zip(bars, ch_vals):
-        ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.5,
-                str(val), ha="center", va="bottom", fontsize=7.5, color=TEXT)
-    ax.set_title("Non-empty Recordings per Audio Channel", fontsize=11, color=TEXT, pad=8)
-    ax.set_ylabel("Recording Count", fontsize=9)
-    ax.set_xticklabels(cols_ord, rotation=45, ha="right", fontsize=9)
-    ax.grid(True,axis="y",linewidth=0.4)
+        ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+3,
+                str(val), ha="center", va="bottom", fontsize=13, color=TEXT)
+    ax.set_ylabel("Recording Count", fontsize=14)
+    ax.set_xticklabels(cols_ord, rotation=45, ha="right", fontsize=13)
+    ax.tick_params(axis="y", labelsize=13)
+    ax.grid(True, axis="y", linewidth=0.4)
     from matplotlib.patches import Patch
-    handles = [Patch(facecolor=CHANNEL_COLORS[l],label=l,alpha=0.85)
+    handles = [Patch(facecolor=CHANNEL_COLORS[l], label=l, alpha=0.85)
                for l in CHANNEL_GROUPS]
-    ax.legend(handles=handles, fontsize=8, loc="upper right")
+    ax.legend(handles=handles, fontsize=13, loc="upper right")
+    ax.set_facecolor(PANEL)
 
-    for a in axes: a.set_facecolor(PANEL)
     plt.tight_layout()
     p = OUTPUT_DIR / "eda_patient_session_counts.png"
     plt.savefig(str(p), dpi=150, bbox_inches="tight", facecolor=BG)
