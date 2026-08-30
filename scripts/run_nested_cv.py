@@ -417,6 +417,35 @@ def run_nested_cv_for_backbone(
         for combo_i, hp in enumerate(neural_grid):
             inner_scores = []
             for inner_i, (inner_train_ids, inner_val_ids) in enumerate(inner_fold_ids):
+                # ── Resume: per-inner-run ────────────────────────────────────
+                # The outer-fold-level checkpoint alone is too coarse for an
+                # expensive backbone (e.g. XLS-R with AMP disabled — ~2 min/
+                # epoch vs ~35s for the others): a single outer fold's inner
+                # search is inner_folds x len(neural_grid) full training runs
+                # (4 here), which can take 1.5-2+ hours before the outer-fold
+                # checkpoint ever gets written. If the session doesn't survive
+                # that long, EVERY restart redoes inner run 1 from scratch —
+                # no progress ever persists, no matter how many sessions it
+                # takes. Persisting each inner run's score the moment it's
+                # computed closes that gap: a disconnect mid-search only
+                # loses the one inner run in progress, not the whole fold's
+                # search so far.
+                inner_path = output_dir / f"{job_name}_fold{fold_i}_inner{inner_i}_combo{combo_i}.json"
+                if inner_path.exists() and not overwrite:
+                    with open(inner_path) as f:
+                        cached_inner = json.load(f)
+                    if cached_inner.get("_config_fingerprint") == fingerprint:
+                        score = cached_inner["score"]
+                        inner_scores.append(score)
+                        log.info(f"    ↩ [inner {inner_i+1}/{inner_folds}] combo={hp} "
+                                 f"SKIP (cached): patient-F1={score:.4f}")
+                        continue
+                    log.warning(
+                        f"    ⚠ {inner_path} exists but was computed under DIFFERENT "
+                        f"settings — recomputing this inner run instead of silently "
+                        f"reusing it."
+                    )
+
                 inner_train_df = outer_train_df[outer_train_df["ID"].isin(inner_train_ids)]
                 inner_val_df   = outer_train_df[outer_train_df["ID"].isin(inner_val_ids)]
                 run_dir = scratch_dir / job_name / f"outer{fold_i}_inner{inner_i}_combo{combo_i}"
@@ -427,6 +456,15 @@ def run_nested_cv_for_backbone(
                 )
                 inner_scores.append(score)
                 shutil.rmtree(run_dir, ignore_errors=True)   # throwaway — keep local disk bounded
+
+                # Persisted immediately — before the next inner run starts —
+                # so a disconnect right after this line still preserves this
+                # inner run's result. Only the score is saved (not the model:
+                # inner runs are throwaway by design, only used to rank
+                # hyperparameters), so this is a tiny, cheap write.
+                with open(inner_path, "w") as f:
+                    json.dump({"score": score, "_config_fingerprint": fingerprint}, f, indent=2)
+
                 log.info(f"    [inner {inner_i+1}/{inner_folds}] combo={hp} "
                          f"patient-F1={score:.4f}")
             mean_score = float(np.mean(inner_scores))
@@ -512,6 +550,12 @@ def run_nested_cv_for_backbone(
         with open(fold_path, "w") as f:
             json.dump(fold_record, f, indent=2, cls=_NumpyEncoder)
         log.info(f"  Fold {fold_i} checkpointed -> {fold_path}")
+
+        # Inner-run caches for this fold are superseded now that the whole
+        # fold is checkpointed — clean them up so they don't accumulate
+        # indefinitely across every backbone/fold/combo on Drive.
+        for stale_cache in output_dir.glob(f"{job_name}_fold{fold_i}_inner*_combo*.json"):
+            stale_cache.unlink(missing_ok=True)
 
         if not save_outer_models:
             shutil.rmtree(final_output_dir, ignore_errors=True)
