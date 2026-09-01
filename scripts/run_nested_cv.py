@@ -483,7 +483,22 @@ def run_nested_cv_for_backbone(
             outer_train_df, val_size=0.15, seed=seed, stratify_col="GROUP"
         )
 
-        final_output_dir = (output_dir if save_outer_models else scratch_dir) / job_name / f"outer_fold_{fold_i}"
+        # ── Always write to persistent storage (Drive) WHILE training runs ──
+        # Trainer.fit() already has full mid-epoch resume (latest_checkpoint
+        # .pt, saved every epoch, with optimizer/scheduler/epoch/patience
+        # state — see trainer.py) — but that mechanism is useless if the
+        # checkpoint lives in scratch_dir, which is ephemeral local Colab
+        # storage wiped every session. Previously routed through scratch_dir
+        # whenever --save_outer_models wasn't passed (the common case),
+        # meaning a disconnect mid-way through this fold's outer_epochs=30
+        # final training always restarted that training from epoch 1,
+        # regardless of how many epochs had already completed — the exact
+        # same class of bug as the inner-run checkpointing gap, just one
+        # level deeper (within a single training run rather than across
+        # runs). save_outer_models now ONLY controls whether this directory
+        # is KEPT after the fold fully completes (below); it no longer
+        # controls where training happens while it's still in progress.
+        final_output_dir = output_dir / job_name / f"outer_fold_{fold_i}"
         outer_results, outer_score, outer_model = train_and_score_neural(
             best_hp, final_train_df, final_val_df, segment_dir, project_root,
             label_fn, backbone_type, mode, pretrained, batch_size,
