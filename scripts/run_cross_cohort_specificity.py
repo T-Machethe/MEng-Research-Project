@@ -124,7 +124,7 @@ from src.pipeline.dataloader import collate_standard
 from src.training.checkpoint import load_checkpoint
 from src.training.metrics import compute_metrics
 from src.training.patient_metrics import (
-    patient_ids_from_samples, aggregate_to_patient_level,
+    patient_ids_from_samples, audio_types_from_samples, aggregate_to_patient_level,
 )
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -392,23 +392,24 @@ def run_inference(model, dataset: SinusitisDataset, device: torch.device,
     return all_probs_np, patient_ids
 
 
-def aggregate_per_patient(probs: np.ndarray, patient_ids: List[str],
+def aggregate_per_patient(probs: np.ndarray, patient_ids: List[str], audio_types: List[str],
                            df_group_lookup: Dict[str, str]) -> pd.DataFrame:
     """
     Segment-level -> patient-level aggregation via MEAN predicted P(CRS)
     (class 1). Thin wrapper around the shared
     src/training/patient_metrics.py::aggregate_to_patient_level(), which
     is also what Exp1 now uses for its patient-level test metrics — same
-    aggregation convention on both sides of the comparison. No ground-
-    truth label is passed here (Sept/Tonsill have no confirmed CRS label
-    — see crs_status_check()), so this is PATIENT-LEVEL but not scored
-    against a label; scoring against the "assumed non-CRS" working
-    hypothesis happens in specificity_metrics() below.
+    aggregation convention on both sides of the comparison, now including
+    the two-stage (recording-then-patient) fix — see that module's
+    history. No ground-truth label is passed here (Sept/Tonsill have no
+    confirmed CRS label — see crs_status_check()), so this is PATIENT-
+    LEVEL but not scored against a label; scoring against the "assumed
+    non-CRS" working hypothesis happens in specificity_metrics() below.
     """
     if probs.shape[0] == 0:
-        return pd.DataFrame(columns=["ID", "p_crs_mean", "n_segments", "GROUP"])
+        return pd.DataFrame(columns=["ID", "p_crs_mean", "n_segments", "n_recordings", "GROUP"])
 
-    agg = aggregate_to_patient_level(probs, patient_ids, labels=None)
+    agg = aggregate_to_patient_level(probs, patient_ids, labels=None, recording_ids=audio_types)
     agg = agg.rename(columns={"p_class1": "p_crs_mean"}).drop(columns=["p_class0"])
     agg["GROUP"] = agg["ID"].map(df_group_lookup)
     return agg
@@ -623,7 +624,8 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                 continue
 
             probs, patient_ids = run_inference(model, dataset, device, batch_size)
-            patient_df = aggregate_per_patient(probs, patient_ids, group_lookup)
+            audio_types = audio_types_from_samples(dataset.samples)
+            patient_df = aggregate_per_patient(probs, patient_ids, audio_types, group_lookup)
             metrics = specificity_metrics(patient_df, threshold)
 
             job_result[grp] = {
@@ -640,7 +642,7 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
             if svm_bundle is not None:
                 svm_probs, svm_patient_ids = run_svm_inference(
                     model, svm_bundle, dataset, device, batch_size)
-                svm_patient_df = aggregate_per_patient(svm_probs, svm_patient_ids, group_lookup)
+                svm_patient_df = aggregate_per_patient(svm_probs, svm_patient_ids, audio_types, group_lookup)
                 svm_metrics = specificity_metrics(svm_patient_df, threshold)
 
                 job_result[grp]["svm_metrics"] = svm_metrics

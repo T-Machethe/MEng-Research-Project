@@ -259,7 +259,7 @@ class BaseExperiment(ABC):
                 f"and iterated exactly once for this alignment to hold."
             )
 
-            patient_df = aggregate_to_patient_level(probs, patient_ids, labels)
+            patient_df = aggregate_to_patient_level(probs, patient_ids, labels, recording_ids=audio_types)
             patient_metrics = compute_patient_level_metrics(
                 patient_df, self.num_classes, split_name=split_name
             )
@@ -290,7 +290,7 @@ class BaseExperiment(ABC):
                 svm_probs  = np.asarray(svm_results[f"{split_name}/all_probs"])
                 svm_labels = np.asarray(svm_results[f"{split_name}/all_labels"])
                 if len(svm_probs) == len(patient_ids):
-                    svm_patient_df = aggregate_to_patient_level(svm_probs, patient_ids, svm_labels)
+                    svm_patient_df = aggregate_to_patient_level(svm_probs, patient_ids, svm_labels, recording_ids=audio_types)
                     svm_patient_metrics = compute_patient_level_metrics(
                         svm_patient_df, self.num_classes, split_name=split_name
                     )

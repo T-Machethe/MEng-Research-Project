@@ -81,7 +81,7 @@ from src.experiments.base import ExperimentConfig
 from src.experiments.all_experiments import Exp1CRSvsControl
 from src.training.checkpoint import load_checkpoint
 from src.training.patient_metrics import (
-    patient_ids_from_samples, aggregate_to_patient_level,
+    patient_ids_from_samples, audio_types_from_samples, aggregate_to_patient_level,
     compute_patient_level_metrics,
 )
 
@@ -204,10 +204,11 @@ def run_one_backbone(job_name: str, backbone_type: str, mode: str, pretrained: O
     test_ds = exp.test_loader.dataset
     if hasattr(test_ds, "samples") and "test/all_probs" in svm_results:
         patient_ids = patient_ids_from_samples(test_ds.samples)
+        audio_types = audio_types_from_samples(test_ds.samples)
         probs  = np.asarray(svm_results["test/all_probs"])
         labels = np.asarray(svm_results["test/all_labels"])
         if len(patient_ids) == len(probs):
-            patient_df = aggregate_to_patient_level(probs, patient_ids, labels)
+            patient_df = aggregate_to_patient_level(probs, patient_ids, labels, recording_ids=audio_types)
             patient_metrics = compute_patient_level_metrics(patient_df, num_classes=2, split_name="test")
             svm_results.update(patient_metrics)
             svm_results["test/patient_level/per_patient"] = patient_df.to_dict(orient="records")

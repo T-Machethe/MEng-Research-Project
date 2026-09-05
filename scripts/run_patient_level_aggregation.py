@@ -277,28 +277,33 @@ def run_val_inference(backbone_type: str, mode: str, pretrained: Optional[str],
 
 
 def aggregate_to_patient_level(probs: np.ndarray, labels: np.ndarray,
-                                patient_ids: List[str]) -> pd.DataFrame:
+                                patient_ids: List[str], audio_types: List[str]) -> pd.DataFrame:
     """
     Thin wrapper around the shared aggregate_to_patient_level(), renaming
     its generic p_class0/p_class1 columns to this script's p_crs_mean
     convention and adding std (useful for spotting low-confidence
     patients — not produced by the shared helper, which is mean-only).
+    Now always passes audio_types through as recording_ids for the
+    two-stage (recording-then-patient) aggregation — see
+    src/training/patient_metrics.py's module history for why this
+    matters (segment yield varies hugely across audio tasks).
     """
-    assert len(probs) == len(labels) == len(patient_ids), (
+    assert len(probs) == len(labels) == len(patient_ids) == len(audio_types), (
         f"Length mismatch: probs={len(probs)}, labels={len(labels)}, "
-        f"patient_ids={len(patient_ids)} — segment_dir/audio_cols likely "
-        f"differ from the original training run, so ordering can't be "
-        f"trusted. Re-check --segment_dir against what Exp1 actually used."
+        f"patient_ids={len(patient_ids)}, audio_types={len(audio_types)} — "
+        f"segment_dir/audio_cols likely differ from the original training "
+        f"run, so ordering can't be trusted. Re-check --segment_dir against "
+        f"what Exp1 actually used."
     )
     try:
-        agg = _shared_aggregate(probs, patient_ids, labels)
+        agg = _shared_aggregate(probs, patient_ids, labels, recording_ids=audio_types)
     except ValueError as e:
         log.warning(f"  {e}")
         rec = pd.DataFrame({"ID": patient_ids, "label": labels})
         conflicted = rec.groupby("ID")["label"].nunique()
         conflicted = conflicted[conflicted > 1].index.tolist()
         log.warning(f"  Proceeding using first-seen label per patient for: {conflicted}")
-        agg = _shared_aggregate(probs, patient_ids, labels=None)
+        agg = _shared_aggregate(probs, patient_ids, labels=None, recording_ids=audio_types)
         first_labels = rec.groupby("ID")["label"].first()
         agg["label"] = agg["ID"].map(first_labels)
 
@@ -307,7 +312,7 @@ def aggregate_to_patient_level(probs: np.ndarray, labels: np.ndarray,
     agg["p_crs_std"] = agg["ID"].map(std_by_id)
 
     agg = agg.rename(columns={"p_class1": "p_crs_mean"}).drop(columns=["p_class0"])
-    return agg[["ID", "p_crs_mean", "p_crs_std", "n_segments", "label"]]
+    return agg[["ID", "p_crs_mean", "p_crs_std", "n_segments", "n_recordings", "label"]]
 
 
 def patient_level_metrics(patient_df: pd.DataFrame, threshold: float,
@@ -338,7 +343,7 @@ def process_split(split_name: str, probs: np.ndarray, labels: np.ndarray,
                    patient_ids: List[str], audio_types: List[str],
                    threshold: float, skip_audio_type: bool) -> Dict:
     """One split's worth of patient-level + audio-type-level results."""
-    patient_df = aggregate_to_patient_level(probs, labels, patient_ids)
+    patient_df = aggregate_to_patient_level(probs, labels, patient_ids, audio_types)
     metrics = patient_level_metrics(patient_df, threshold, split_name)
 
     result = {
