@@ -65,8 +65,8 @@ def patient_ids_from_samples(samples) -> List[str]:
 
 def aggregate_to_patient_level(probs: np.ndarray,
                                 patient_ids: List[str],
-                                labels: Optional[np.ndarray] = None,
-                                recording_ids: Optional[List[str]] = None) -> pd.DataFrame:
+                                recording_ids: List[str],
+                                labels: Optional[np.ndarray] = None) -> pd.DataFrame:
     """
     TWO-STAGE aggregation, per examiner instruction: mean-pool segment-
     level probabilities within each RECORDING first, then mean-pool
@@ -80,28 +80,26 @@ def aggregate_to_patient_level(probs: np.ndarray,
 
     "Recording" = (patient_id, recording_id) pair. Every current caller
     passes recording_id = the audio task/column (via
-    audio_types_from_samples()) — valid because both Exp1 and Exp5's
-    populations are Session-1-only (Exp1CRSvsControl filters session==1;
-    run_cross_cohort_specificity.py's load_and_filter_csv does too for
-    Sept/Tonsill), so (patient, session, audio_col) reduces to (patient,
-    audio_col) with session held constant. This assumption does NOT
-    extend to multi-session cohorts (Exp2/3/4) without also including
-    session in recording_ids — don't reuse this for those without
-    revisiting that.
+    audio_types_from_samples()) — valid because Exp1, Exp5, and nested
+    CV all use Session-1-only populations (Exp1CRSvsControl filters
+    session==1; run_cross_cohort_specificity.py's load_and_filter_csv
+    does too for Sept/Tonsill; run_nested_cv.py's outer/inner splits are
+    built from that same Session-1-only Exp1 population), so (patient,
+    session, audio_col) reduces to (patient, audio_col) with session
+    held constant. This assumption does NOT extend to multi-session
+    cohorts (Exp2/3/4) without also including session in recording_ids
+    — don't reuse this for those without revisiting that.
 
-    recording_ids is OPTIONAL, defaulting to None, for one reason only:
-    scripts/run_nested_cv.py's three call sites are not yet updated to
-    pass it (deliberately deferred — the fix there would invalidate
-    already-completed nested CV folds for wav2vec2_scratch and
-    wav2vec2_finetune, whose per-fold trained models are already deleted
-    -- see module history -- so applying it means a full retrain, not a
-    rerun). Passing recording_ids=None preserves the OLD flat one-stage
-    mean EXACTLY (byte-for-byte — see the branch below), with a warning
-    logged every time, so nested_cv.py keeps working unmodified until
-    that retrain is deliberately scheduled. Every OTHER caller (Exp1,
-    Exp5) has been updated to always pass real recording_ids — treat
-    seeing that warning fire from anywhere other than run_nested_cv.py
-    as a bug to fix, not something to silence.
+    recording_ids is a REQUIRED parameter, deliberately — there is no
+    flat, one-stage fallback anymore. There used to be one, kept for
+    scripts/run_nested_cv.py while its three call sites were being
+    updated to match every other caller (Exp1, Exp5); now that they have
+    been (see module history), keeping a silent, degraded fallback path
+    around serves no purpose except to let a future caller accidentally
+    regress to the wrong aggregation with no error. If you're adding a
+    new caller, get real recording_ids (audio_types_from_samples() is
+    almost always the answer, given the Session-1-only constraint above)
+    rather than looking for a way around this requirement.
 
     Mean pooling (rather than majority vote on hard predictions) is
     still used at both stages, for consistency with the aggregation
@@ -113,62 +111,22 @@ def aggregate_to_patient_level(probs: np.ndarray,
     ----------
     probs         : [N, num_classes] segment-level predicted probabilities.
     patient_ids   : length-N list, aligned index-for-index with `probs`.
-    labels        : optional length-N ground-truth labels. Asserted CONSTANT
-                    within each patient (a mismatch raises) — checked at
-                    the recording level too when recording_ids is given,
-                    as a stricter version of the same invariant. Kept in
-                    its ORIGINAL 3rd positional slot (unlike recording_ids,
-                    which is new and comes after it) specifically so every
-                    existing positional call — including run_nested_cv.py's
-                    three, deliberately left unmodified — keeps working
-                    unchanged; putting recording_ids before labels would
-                    have silently reinterpreted those callers' labels
-                    arrays as recording_ids instead, breaking every
-                    downstream label-dependent metric with no error.
     recording_ids : length-N list, aligned index-for-index with `probs` —
                     identifies which recording each segment came from.
-                    None = old flat behavior (deprecated, nested_cv.py only).
+                    Required — see above.
+    labels        : optional length-N ground-truth labels. Asserted CONSTANT
+                    within each patient (a mismatch raises) — checked at
+                    the recording level too, as a stricter version of the
+                    same invariant.
 
     Returns
     -------
-    One row per patient: ID, p_class{0..k}, n_segments, [n_recordings],
-    [label]. n_recordings is only present when recording_ids is given.
+    One row per patient: ID, p_class{0..k}, n_segments, n_recordings,
+    [label].
     """
     n_classes = probs.shape[1]
     prob_cols = [f"p_class{c}" for c in range(n_classes)]
 
-    if recording_ids is None:
-        log.warning(
-            "  [aggregate_to_patient_level] recording_ids not provided — "
-            "using the OLD flat segment-to-patient mean, not the two-stage "
-            "(recording-then-patient) aggregation. Expected only from "
-            "scripts/run_nested_cv.py right now (deliberately deferred — "
-            "see docstring); anywhere else, this is a bug."
-        )
-        data = {"ID": patient_ids}
-        for c in range(n_classes):
-            data[f"p_class{c}"] = probs[:, c]
-        if labels is not None:
-            data["label"] = np.asarray(labels)
-        rec = pd.DataFrame(data)
-
-        agg = rec.groupby("ID").agg({c: "mean" for c in prob_cols})
-        agg["n_segments"] = rec.groupby("ID").size()
-
-        if labels is not None:
-            label_nunique = rec.groupby("ID")["label"].nunique()
-            inconsistent = label_nunique[label_nunique > 1]
-            if len(inconsistent) > 0:
-                raise ValueError(
-                    f"Patient(s) with inconsistent segment-level labels — "
-                    f"cannot aggregate to patient level safely: "
-                    f"{list(inconsistent.index)}"
-                )
-            agg["label"] = rec.groupby("ID")["label"].first()
-
-        return agg.reset_index()
-
-    # ── Two-stage: segment -> recording -> patient ──────────────────────────
     data = {"ID": patient_ids, "_recording": recording_ids}
     for c in range(n_classes):
         data[f"p_class{c}"] = probs[:, c]
@@ -236,6 +194,13 @@ def compute_patient_level_metrics(patient_df: pd.DataFrame,
     key = f"{split_name}/patient_level"
     metrics = compute_metrics(labels, preds, probs, num_classes, split_name=key)
     metrics[f"{key}/n_patients"] = int(len(patient_df))
+    # Explicit, self-documenting version stamp — lets a status-scanner (or
+    # anyone reading a saved results file later) tell which aggregation
+    # methodology produced it without inferring anything indirectly.
+    # "n_recordings" in patient_df is a reliable retroactive signal for
+    # files that predate this stamp (only ever added by the two-stage
+    # path), but new results should never need that inference.
+    metrics[f"{key}/aggregation_method"] = "two_stage_recording_then_patient"
     return metrics
 
 

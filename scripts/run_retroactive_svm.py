@@ -208,7 +208,7 @@ def run_one_backbone(job_name: str, backbone_type: str, mode: str, pretrained: O
         probs  = np.asarray(svm_results["test/all_probs"])
         labels = np.asarray(svm_results["test/all_labels"])
         if len(patient_ids) == len(probs):
-            patient_df = aggregate_to_patient_level(probs, patient_ids, labels, recording_ids=audio_types)
+            patient_df = aggregate_to_patient_level(probs, patient_ids, recording_ids=audio_types, labels=labels)
             patient_metrics = compute_patient_level_metrics(patient_df, num_classes=2, split_name="test")
             svm_results.update(patient_metrics)
             svm_results["test/patient_level/per_patient"] = patient_df.to_dict(orient="records")

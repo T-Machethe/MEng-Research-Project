@@ -296,7 +296,7 @@ def aggregate_to_patient_level(probs: np.ndarray, labels: np.ndarray,
         f"what Exp1 actually used."
     )
     try:
-        agg = _shared_aggregate(probs, patient_ids, labels, recording_ids=audio_types)
+        agg = _shared_aggregate(probs, patient_ids, recording_ids=audio_types, labels=labels)
     except ValueError as e:
         log.warning(f"  {e}")
         rec = pd.DataFrame({"ID": patient_ids, "label": labels})

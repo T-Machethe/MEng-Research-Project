@@ -105,7 +105,7 @@ from src.pipeline.splits import patient_group_kfold
 from src.pipeline.dataloader import build_experiment_loaders
 from src.training.imbalance import compute_class_weights
 from src.training.patient_metrics import (
-    patient_ids_from_samples, aggregate_to_patient_level,
+    patient_ids_from_samples, audio_types_from_samples, aggregate_to_patient_level,
     compute_patient_level_metrics,
 )
 
@@ -208,10 +208,11 @@ def train_and_score_neural(
     test_ds = test_loader.dataset
     if hasattr(test_ds, "samples") and "test/all_probs" in results:
         patient_ids = patient_ids_from_samples(test_ds.samples)
+        audio_types = audio_types_from_samples(test_ds.samples)
         probs  = np.asarray(results["test/all_probs"])
         labels = np.asarray(results["test/all_labels"])
         if len(patient_ids) == len(probs):
-            pdf = aggregate_to_patient_level(probs, patient_ids, labels)
+            pdf = aggregate_to_patient_level(probs, patient_ids, recording_ids=audio_types, labels=labels)
             pm  = compute_patient_level_metrics(pdf, num_classes=2, split_name="test")
             score = pm.get("test/patient_level/f1_macro", score)
             results.update(pm)
@@ -249,10 +250,11 @@ def svm_nested_fold(
         loader = DataLoader(ds, batch_size=batch_size, shuffle=False, collate_fn=collate_standard)
         emb, labels = extract_embeddings(model, loader, device)
         pids = patient_ids_from_samples(ds.samples)
-        return np.asarray(emb), np.asarray(labels), pids
+        audio_types = audio_types_from_samples(ds.samples)
+        return np.asarray(emb), np.asarray(labels), pids, audio_types
 
-    train_emb, train_labels, train_pids = embed(outer_train_df)
-    test_emb,  test_labels,  test_pids  = embed(outer_test_df)
+    train_emb, train_labels, train_pids, _train_audio_types = embed(outer_train_df)
+    test_emb,  test_labels,  test_pids,  test_audio_types   = embed(outer_test_df)
 
     # Patient-grouped inner folds for SVM hyperparameter selection, driven
     # by patient_group_kfold — same leakage guarantee as everywhere else,
@@ -288,7 +290,7 @@ def svm_nested_fold(
     svc.fit(scaler.transform(train_emb), train_labels)
     test_probs = svc.predict_proba(scaler.transform(test_emb))
 
-    patient_df = aggregate_to_patient_level(test_probs, test_pids, test_labels)
+    patient_df = aggregate_to_patient_level(test_probs, test_pids, recording_ids=test_audio_types, labels=test_labels)
     patient_metrics = compute_patient_level_metrics(patient_df, num_classes=2, split_name="test")
 
     return best_hp, patient_metrics, patient_df
@@ -337,11 +339,21 @@ def config_fingerprint(neural_grid: List[Dict], svm_grid: List[Dict],
     incompatible folds into one aggregated estimate with no warning —
     this fingerprint is compared on every resume so that mismatch is
     caught and made loud instead.
+
+    _aggregation_method is a fixed literal, not a real setting — it
+    exists purely so that every fold/inner-run cache written BEFORE
+    aggregate_to_patient_level() gained the two-stage (recording-then-
+    patient) fix carries a DIFFERENT fingerprint than anything computed
+    after it, without needing the person running this to remember to
+    pass --overwrite. Bump this string any time the aggregation
+    methodology itself changes again in the future — that's the whole
+    point of it being here rather than left implicit.
     """
     return {
         "neural_grid": neural_grid, "svm_grid": svm_grid,
         "outer_folds": outer_folds, "inner_folds": inner_folds, "seed": seed,
         "inner_epochs": inner_epochs, "outer_epochs": outer_epochs,
+        "_aggregation_method": "two_stage_recording_then_patient_v1",
     }
 
 
@@ -522,8 +534,9 @@ def run_nested_cv_for_backbone(
                 all_probs.append(torch.softmax(logits, dim=-1).cpu().numpy())
         outer_test_probs = np.concatenate(all_probs, axis=0) if all_probs else np.zeros((0, 2))
         outer_test_patient_ids = patient_ids_from_samples(outer_test_ds.samples)
+        outer_test_audio_types = audio_types_from_samples(outer_test_ds.samples)
         outer_test_seg_labels = np.array([lbl for _, lbl, _ in outer_test_ds.samples])
-        outer_patient_df = aggregate_to_patient_level(outer_test_probs, outer_test_patient_ids, outer_test_seg_labels)
+        outer_patient_df = aggregate_to_patient_level(outer_test_probs, outer_test_patient_ids, recording_ids=outer_test_audio_types, labels=outer_test_seg_labels)
         outer_patient_metrics = compute_patient_level_metrics(outer_patient_df, num_classes=2, split_name="outer_test")
 
         log.info(f"\n  OUTER FOLD {fold_i} final score (on held-out outer_test, "
