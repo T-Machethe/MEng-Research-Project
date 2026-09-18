@@ -138,7 +138,21 @@ def check_nested_cv(results_dir: _Path) -> None:
     for fold_path in fold_files:
         with open(fold_path) as f:
             res = json.load(f)
-        status = classify(res, "outer_test")
+        # Unlike Exp1/Exp5's results_summary.json (flattened by
+        # merge_into_results_summary()), a nested-CV fold record keeps its
+        # patient-level metrics NESTED under "outer_test_metrics" rather
+        # than at the top level, and stores per-patient rows under the
+        # differently-named "outer_test_per_patient" key (underscore, not
+        # the "outer_test/patient_level/per_patient" shape classify()
+        # otherwise expects) — see run_nested_cv.py::run_nested_cv_for_backbone().
+        # Passing the raw fold dict straight to classify() therefore always
+        # falls through to "not_computed", regardless of which aggregation
+        # method actually produced the fold. Build the shape classify()
+        # expects from the fold record's real fields instead.
+        nested_metrics = dict(res.get("outer_test_metrics", {}))
+        if "outer_test_per_patient" in res:
+            nested_metrics["outer_test/patient_level/per_patient"] = res["outer_test_per_patient"]
+        status = classify(nested_metrics, "outer_test")
         fp = res.get("_config_fingerprint", {})
         fp_marker = fp.get("_aggregation_method", "MISSING (pre-fix cache — will "
                                                    "auto-recompute on next resume)")
