@@ -446,7 +446,9 @@ def specificity_metrics(patient_df: pd.DataFrame, threshold: float) -> Dict:
 
 
 def load_exp1_baseline(checkpoints_dir: _Path, job_name: str,
-                        threshold: float = 0.5) -> Dict:
+                        threshold: float = 0.5,
+                        checkpoint_subdir: str = "exp1_backbone_comparison",
+                        control_fpr_override: Optional[Dict] = None) -> Dict:
     """
     Pulls the FESS/Control patient-level test-set rates from Exp1's own
     results_summary.json for this backbone, so the Sept/Tonsill
@@ -468,7 +470,35 @@ def load_exp1_baseline(checkpoints_dir: _Path, job_name: str,
     Returns {} (with a log message) if Exp1 hasn't been run with the
     patient-level metrics addition yet, or the file isn't there.
     """
-    path = checkpoints_dir / "exp1_backbone_comparison" / job_name / "results_summary.json"
+    # ── Precomputed override takes priority ────────────────────────────
+    # For a model with no genuine held-out Exp1 split of its own (e.g. the
+    # nested-CV final refit, trained on the FULL filtered Exp1 population —
+    # see compute_nested_cv_control_fpr.py / the notebook cell that builds
+    # this file), a results_summary.json-based Control-FPR would be
+    # meaningless. --control_fpr_json instead supplies one precomputed
+    # from the nested-CV outer-fold per-patient predictions (a genuinely
+    # held-out number for the same architecture/hyperparameters).
+    if control_fpr_override is not None:
+        override = control_fpr_override.get(job_name)
+        if override is None:
+            log.warning(f"  No precomputed control-FPR entry for {job_name} "
+                        f"in --control_fpr_json — baseline comparison "
+                        f"unavailable for this backbone.")
+            return {}
+        baseline: Dict = {}
+        mlp = override.get("mlp", {})
+        if "control_false_positive_rate" in mlp:
+            baseline["test/patient_level/control_false_positive_rate"] = mlp["control_false_positive_rate"]
+            baseline["test/patient_level/control_n_patients"] = mlp.get("control_n_patients")
+        svm = override.get("svm", {})
+        if "control_false_positive_rate" in svm:
+            baseline["svm"] = {
+                "test/patient_level/control_false_positive_rate": svm["control_false_positive_rate"],
+                "test/patient_level/control_n_patients": svm.get("control_n_patients"),
+            }
+        return baseline
+
+    path = checkpoints_dir / checkpoint_subdir / job_name / "results_summary.json"
     if not path.exists():
         log.warning(f"  No Exp1 results_summary.json at {path} — "
                     f"baseline comparison unavailable for {job_name}.")
@@ -560,13 +590,17 @@ def run_svm_inference(model, svm_bundle: Dict, dataset: SinusitisDataset,
 def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                  checkpoints_dir: _Path, output_dir: _Path,
                  device: torch.device, batch_size: int, threshold: float,
-                 overwrite: bool = False):
+                 overwrite: bool = False,
+                 checkpoint_subdir: str = "exp1_backbone_comparison",
+                 control_fpr_override: Optional[Dict] = None,
+                 jobs_filter: Optional[List[str]] = None):
     output_dir.mkdir(parents=True, exist_ok=True)
     group_lookup = dict(zip(filtered["ID"], filtered["GROUP"]))
 
     combined_summary = {}
 
-    for job_name, backbone_type, mode, pretrained in BACKBONE_JOBS:
+    jobs = [j for j in BACKBONE_JOBS if jobs_filter is None or j[0] in jobs_filter]
+    for job_name, backbone_type, mode, pretrained in jobs:
         log.info(f"\n{'─'*70}\n  Evaluating fixed Exp1 checkpoint: {job_name}\n{'─'*70}")
 
         # ── Skip if already evaluated — this is inference over the full
@@ -581,7 +615,7 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
                 combined_summary[job_name] = json.load(f)
             continue
 
-        ckpt_path = checkpoints_dir / "exp1_backbone_comparison" / job_name / "best_model.pt"
+        ckpt_path = checkpoints_dir / checkpoint_subdir / job_name / "best_model.pt"
         if not ckpt_path.exists():
             log.warning(f"  Checkpoint not found, skipping: {ckpt_path}")
             continue
@@ -599,7 +633,7 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
 
         # ── Optional SVM head — only if Exp1 training saved one ───────────
         svm_bundle = None
-        svm_path = checkpoints_dir / "exp1_backbone_comparison" / job_name / "svm" / "svm_model.joblib"
+        svm_path = checkpoints_dir / checkpoint_subdir / job_name / "svm" / "svm_model.joblib"
         if svm_path.exists():
             import joblib
             svm_bundle = joblib.load(svm_path)
@@ -608,7 +642,9 @@ def do_evaluate(filtered: pd.DataFrame, segment_dirs: Dict[str, str],
         else:
             log.info(f"  No SVM head at {svm_path} — MLP-only for this backbone.")
 
-        exp1_baseline = load_exp1_baseline(checkpoints_dir, job_name, threshold)
+        exp1_baseline = load_exp1_baseline(checkpoints_dir, job_name, threshold,
+                                            checkpoint_subdir=checkpoint_subdir,
+                                            control_fpr_override=control_fpr_override)
 
         job_result = {"exp1_baseline": exp1_baseline}
         for grp in TEST_GROUPS:
@@ -766,6 +802,30 @@ def main():
                                      "clean_audio_exp5_specificity"))
     parser.add_argument("--checkpoints_dir", type=str,
                          default=str(PROJECT_ROOT / "MSc_Sinusitis_results"))
+    parser.add_argument("--checkpoint_subdir", type=str,
+                         default="exp1_backbone_comparison",
+                         help="Subdirectory of --checkpoints_dir containing "
+                              "{job_name}/best_model.pt for each backbone. "
+                              "Default matches the single-split preliminary "
+                              "screening layout. Pass \"\" (empty string) when "
+                              "--checkpoints_dir already points directly at "
+                              "the parent of the per-job folders, e.g. the "
+                              "nested-CV final-refit output directory.")
+    parser.add_argument("--control_fpr_json", type=str, default=None,
+                         help="Path to a precomputed per-job Control-FPR "
+                              "JSON (see compute_nested_cv_control_fpr.py), "
+                              "used instead of reading "
+                              "{checkpoint_subdir}/{job}/results_summary.json. "
+                              "Required when the evaluated checkpoint has no "
+                              "genuine held-out Exp1 split of its own (e.g. "
+                              "the nested-CV final refit, trained on the "
+                              "full filtered Exp1 population).")
+    parser.add_argument("--jobs", type=str, default=None,
+                         help="Comma-separated subset of backbone job names "
+                              "to evaluate (default: all 6). Use this to "
+                              "restrict to the shortlisted 3 when the "
+                              "checkpoints_dir only contains those, e.g. "
+                              "the nested-CV final-refit output directory.")
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--project_root", type=str, default=str(PROJECT_ROOT))
     parser.add_argument("--batch_size", type=int, default=16)
@@ -793,10 +853,20 @@ def main():
     if args.step in ("regenerate", "all"):
         regenerate_clean_segments(filtered, project_root, segment_dir, modes_needed)
 
+    control_fpr_override = None
+    if args.control_fpr_json:
+        with open(args.control_fpr_json) as f:
+            control_fpr_override = json.load(f)
+
+    jobs_filter = [j.strip() for j in args.jobs.split(",")] if args.jobs else None
+
     if args.step in ("evaluate", "all"):
         segment_dirs = resolve_segment_dirs(segment_dir, modes_needed)
         do_evaluate(filtered, segment_dirs, checkpoints_dir, output_dir,
-                    device, args.batch_size, args.threshold, args.overwrite)
+                    device, args.batch_size, args.threshold, args.overwrite,
+                    checkpoint_subdir=args.checkpoint_subdir,
+                    control_fpr_override=control_fpr_override,
+                    jobs_filter=jobs_filter)
 
 
 if __name__ == "__main__":
