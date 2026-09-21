@@ -24,12 +24,18 @@ Input
   A single JSON file containing integer prediction arrays and float
   probability arrays keyed as:
     y_true
-    y_pred_w2v2_scratch,  y_pred_wavlm_scratch,  y_pred_xlsr_scratch
-    y_pred_w2v2_ft,       y_pred_wavlm_ft,       y_pred_xlsr_ft
-    y_pred_w2v2_svm,      y_pred_wavlm_svm,      y_pred_xlsr_svm
-    y_prob_w2v2_scratch,  y_prob_wavlm_scratch,  y_prob_xlsr_scratch
-    y_prob_w2v2_ft,       y_prob_wavlm_ft,       y_prob_xlsr_ft
-    y_prob_w2v2_svm,      y_prob_wavlm_svm,      y_prob_xlsr_svm
+    y_pred_w2v2_scratch,   y_pred_wavlm_scratch,   y_pred_xlsr_scratch
+    y_pred_w2v2_ft,        y_pred_wavlm_ft,        y_pred_xlsr_ft
+    y_pred_w2v2_ft_svm,    y_pred_wavlm_ft_svm,    y_pred_xlsr_ft_svm
+    y_prob_w2v2_scratch,   y_prob_wavlm_scratch,   y_prob_xlsr_scratch
+    y_prob_w2v2_ft,        y_prob_wavlm_ft,        y_prob_xlsr_ft
+    y_prob_w2v2_ft_svm,    y_prob_wavlm_ft_svm,    y_prob_xlsr_ft_svm
+
+  NOTE: the SVM keys carry the "_ft" infix (e.g. "w2v2_ft_svm"), matching
+  the same base key as their MLP counterpart with "_svm" appended — NOT
+  "w2v2_svm". An earlier version of this script's MODELS list expected the
+  latter, which meant every SVM row silently read as "pending" even when
+  correctly-packed SVM predictions were present in the input JSON.
 
   Missing keys (e.g. xlsr_scratch before training completes) are handled
   gracefully — those rows appear as "pending" in the output tables.
@@ -80,9 +86,17 @@ MODELS = [
     ("wav2vec2-FT (MLP)",   "y_pred_w2v2_ft",       "y_prob_w2v2_ft",       False),
     ("WavLM-FT (MLP)",      "y_pred_wavlm_ft",      "y_prob_wavlm_ft",      False),
     ("XLS-R-FT (MLP)",      "y_pred_xlsr_ft",       "y_prob_xlsr_ft",       False),
-    ("wav2vec2-FT (SVM)",   "y_pred_w2v2_svm",      "y_prob_w2v2_svm",      True),
-    ("WavLM-FT (SVM)",      "y_pred_wavlm_svm",     "y_prob_wavlm_svm",     True),
-    ("XLS-R-FT (SVM)",      "y_pred_xlsr_svm",      "y_prob_xlsr_svm",      True),
+    # NOTE: the SVM keys previously read "y_pred_w2v2_svm" etc. — dropping
+    # the "_ft" infix that the MLP rows above keep. That inconsistency
+    # never matched any actual predictions-JSON builder (every builder
+    # derives an SVM key by appending "_svm" to the SAME base key used for
+    # the MLP row, e.g. "w2v2_ft" -> "w2v2_ft_svm"), so every SVM row
+    # silently fell through to "PENDING" even when SVM predictions were
+    # present and correctly packed. Fixed to match the key convention
+    # that's actually produced upstream.
+    ("wav2vec2-FT (SVM)",   "y_pred_w2v2_ft_svm",   "y_prob_w2v2_ft_svm",   True),
+    ("WavLM-FT (SVM)",      "y_pred_wavlm_ft_svm",  "y_prob_wavlm_ft_svm",  True),
+    ("XLS-R-FT (SVM)",      "y_pred_xlsr_ft_svm",   "y_prob_xlsr_ft_svm",   True),
 ]
 
 MCNEMAR_PAIRS = [
@@ -90,7 +104,7 @@ MCNEMAR_PAIRS = [
     ("wav2vec2-scratch",  "y_pred_w2v2_scratch", "XLS-R-FT (MLP)",  "y_pred_xlsr_ft"),
     ("wav2vec2-scratch",  "y_pred_w2v2_scratch", "WavLM-scratch",   "y_pred_wavlm_scratch"),
     ("XLS-R-FT (MLP)",   "y_pred_xlsr_ft",      "WavLM-FT (MLP)",  "y_pred_wavlm_ft"),
-    ("XLS-R-FT (SVM)",   "y_pred_xlsr_svm",     "wav2vec2-scratch", "y_pred_w2v2_scratch"),
+    ("XLS-R-FT (SVM)",   "y_pred_xlsr_ft_svm",  "wav2vec2-scratch", "y_pred_w2v2_scratch"),
 ]
 
 LATEX_MODEL_NAMES = {
